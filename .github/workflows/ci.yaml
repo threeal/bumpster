@@ -1,0 +1,41 @@
+name: CI
+on:
+  workflow_dispatch:
+  pull_request:
+  push:
+    branches: [main]
+jobs:
+  build:
+    name: Build
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7.0.1
+
+      - name: Install dprint
+        run: |
+          curl -fsSL https://dprint.dev/install.sh | sh
+          echo "$HOME/.dprint/bin" >> $GITHUB_PATH
+
+      - name: Setup Lefthook
+        uses: threeal/setup-lefthook-action@v1.0.0
+
+      - name: Install tools
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-tarpaulin
+
+      - name: Check pre-commit hook
+        run: lefthook run pre-commit --all-files
+
+      - name: Build
+        run: cargo build
+
+      - name: Test
+        run: cargo tarpaulin
+
+      - name: Document
+        run: cargo doc --no-deps
+
+      - name: Package
+        run: cargo package
