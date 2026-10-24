@@ -2,11 +2,9 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-> **Template notice:** This file describes the template repository itself. In a project derived from this template, tell the user it should be replaced with project-specific guidance.
-
 ## About This Repository
 
-A minimal Rust library and CLI starter template. Its only application code is a placeholder Fibonacci implementation in `src/` — real logic is added by projects derived from it.
+A Rust CLI that bumps a tool's version in the current repository and opens a PR authored by the user, covering updates Dependabot can't do (e.g. Node.js, pnpm, dprint plugins). It runs `git` and `gh` as commands rather than using libraries, so the user's commit signing, hooks, and auth apply. `src/` currently holds only a stub that rejects every tool.
 
 ## Gotchas
 
