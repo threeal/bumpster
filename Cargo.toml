@@ -1,14 +1,14 @@
 [package]
-name = "bonacci"
+name = "bumpster"
 version = "0.1.0"
-authors = ["Leonardo Bonacci <leonardo@bonacci.com>"]
-categories = ["algorithms", "mathematics"]
+authors = ["Alfi Maulana <alfi.maulana.f@gmail.com>"]
+categories = ["command-line-utilities", "development-tools"]
 edition = "2024"
-keywords = ["fibonacci", "sequence"]
-license = "Unlicense"
-repository = "https://github.com/leonardo/bonacci"
+keywords = ["bump", "dependencies", "pull-request", "version"]
+license = "MIT"
+repository = "https://github.com/threeal/bumpster"
 rust-version = "1.99"
-description = "An example library and CLI for generating a Fibonacci sequence"
+description = "Bump tool versions that Dependabot can't, in PRs authored by you"
 
 [dependencies]
 clap = "4.6.7"

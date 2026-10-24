@@ -1,26 +1,22 @@
-//! A command-line interface for generating a Fibonacci sequence.
-//!
-//! This is the placeholder CLI of a project template; remove it along with the
-//! `clap` dependency if your project doesn't need one.
+//! A command-line interface for bumping the version of a tool in a repository.
 
 #[cfg(not(tarpaulin_include))]
 fn main() {
-    let matches = clap::Command::new("bonacci")
+    let matches = clap::Command::new("bumpster")
         .version(env!("CARGO_PKG_VERSION"))
-        .about("Generate a Fibonacci sequence up to the given number of terms")
+        .about("Bump the version of a tool in the current repository")
+        .arg(clap::arg!(<tool> "The tool to bump"))
         .arg(
-            clap::arg!([n] "The number of terms")
-                .value_parser(clap::value_parser!(usize))
-                .required(true),
+            clap::arg!([target] "The version to bump to, defaults to the latest")
+                .value_name("VERSION"),
         )
         .get_matches();
 
-    let n = matches.get_one::<usize>("n").unwrap_or(&0);
-    let output = bonacci::fibonacci_sequence(*n)
-        .iter()
-        .map(ToString::to_string)
-        .collect::<Vec<_>>()
-        .join(" ");
+    let tool = matches.get_one::<String>("tool").map_or("", String::as_str);
+    let version = matches.get_one::<String>("target").map(String::as_str);
 
-    println!("{output}");
+    if let Err(err) = bumpster::bump(tool, version) {
+        eprintln!("error: {err}");
+        std::process::exit(1);
+    }
 }
