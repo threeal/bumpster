@@ -4,13 +4,13 @@ A command-line tool for bumping tool versions that Dependabot can't, such as Nod
 
 ## Usage
 
-Run Bumpster in a repository with the tool to bump, and optionally the version to bump to:
+Run Bumpster on the `main` branch of a repository with a clean working tree, passing the tool to bump and the version to bump to:
 
 ```sh
-bumpster <tool> [version]
+bumpster pnpm <version>
 ```
 
-If no version is given, it bumps the tool to its latest version. No tools are supported yet.
+It updates the version, commits the change to a new branch, pushes it, and prints the title and description of the pull request to open. pnpm, in the `packageManager` field of `package.json`, is the only supported tool so far.
 
 ## License
 
