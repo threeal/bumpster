@@ -11,7 +11,9 @@ rust-version = "1.99"
 description = "Bump tool versions that Dependabot can't, in PRs authored by you"
 
 [dependencies]
+anyhow = "1.0.104"
 clap = "4.6.7"
+serde_json = "1.0.154"
 
 [lints.clippy]
 pedantic = "warn"

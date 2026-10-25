@@ -5,18 +5,29 @@ fn main() {
     let matches = clap::Command::new("bumpster")
         .version(env!("CARGO_PKG_VERSION"))
         .about("Bump the version of a tool in the current repository")
-        .arg(clap::arg!(<tool> "The tool to bump"))
-        .arg(
-            clap::arg!([target] "The version to bump to, defaults to the latest")
-                .value_name("VERSION"),
+        .subcommand_required(true)
+        .subcommand(
+            clap::Command::new("pnpm")
+                .about("Bump pnpm in the packageManager field of package.json")
+                .arg(clap::arg!(<target> "The version to bump to").value_name("VERSION")),
         )
         .get_matches();
 
-    let tool = matches.get_one::<String>("tool").map_or("", String::as_str);
-    let version = matches.get_one::<String>("target").map(String::as_str);
+    let result = match matches.subcommand() {
+        Some(("pnpm", matches)) => {
+            let version = matches
+                .get_one::<String>("target")
+                .map_or("", String::as_str);
+            bumpster::pnpm::bump(version)
+        }
+        _ => unreachable!("a subcommand is required"),
+    };
 
-    if let Err(err) = bumpster::bump(tool, version) {
-        eprintln!("error: {err}");
-        std::process::exit(1);
+    match result {
+        Ok(pull_request) => println!("{pull_request}"),
+        Err(err) => {
+            eprintln!("error: {err:#}");
+            std::process::exit(1);
+        }
     }
 }

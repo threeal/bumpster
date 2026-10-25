@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## About This Repository
 
-A Rust CLI that bumps a tool's version in the current repository and opens a PR authored by the user, covering updates Dependabot can't do (e.g. Node.js, pnpm, dprint plugins). It runs `git` and `gh` as commands rather than using libraries, so the user's commit signing, hooks, and auth apply. `src/` currently holds only a stub that rejects every tool.
+A Rust CLI that bumps a tool's version in the current repository and opens a PR authored by the user, covering updates Dependabot can't do (e.g. Node.js, pnpm, dprint plugins). It runs `git` and `gh` as commands rather than using libraries, so the user's commit signing, hooks, and auth apply. Each supported tool has its own module in `src/` (only `pnpm.rs` so far), with the git commands wrapped in `src/git.rs`.
 
 ## Gotchas
 
