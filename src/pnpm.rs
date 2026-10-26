@@ -9,6 +9,7 @@ pub const TOOL: Tool = Tool {
     id: "pnpm",
     name: "pnpm",
     repository: "pnpm/pnpm",
+    tag_prefix: "v",
     file: "package.json",
     edit: bump_package_json,
     command: None,

@@ -10,6 +10,7 @@ pub const TOOL: Tool = Tool {
     id: "node",
     name: "Node.js",
     repository: "nodejs/node",
+    tag_prefix: "v",
     file: "package.json",
     edit: bump_package_json,
     command: Some(("pnpm", &["install", "--lockfile-only"])),
