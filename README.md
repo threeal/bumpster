@@ -17,10 +17,13 @@ This installs the `bumpster` command into `~/.cargo/bin`, so it can be run from 
 Run Bumpster on the `main` branch of a repository with a clean working tree, passing the tool to bump and the version to bump to:
 
 ```sh
-bumpster pnpm <version>
+bumpster <tool> <version>
 ```
 
-It updates the version, commits the change to a new branch, pushes it, and prints the title and description of the pull request to open. pnpm, in the `packageManager` field of `package.json`, is the only supported tool so far.
+It updates the version, commits the change to a new branch, pushes it, and prints the title and description of the pull request to open. The supported tools are:
+
+- **`node`** — Node.js, in the `devEngines.runtime` field of `package.json`, with `pnpm-lock.yaml` updated to match.
+- **`pnpm`** — pnpm, in the `packageManager` field of `package.json`.
 
 ## License
 
