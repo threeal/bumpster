@@ -12,6 +12,8 @@ pub struct Tool {
     pub name: &'static str,
     /// The GitHub repository of the tool, used to link its release notes.
     pub repository: &'static str,
+    /// The text before the version in the tool's release tags, such as `v`.
+    pub tag_prefix: &'static str,
     /// The file that holds the version of the tool.
     pub file: &'static str,
     /// Returns the content of `file` with the tool bumped to the given
@@ -85,8 +87,9 @@ impl Tool {
     pub fn pull_request(&self, version: &str) -> String {
         let name = self.name;
         let repository = self.repository;
+        let tag_prefix = self.tag_prefix;
         format!(
-            "Bump {name} to version {version}\n\nThis pull request bumps {name} to version [{version}](https://github.com/{repository}/releases/tag/v{version})."
+            "Bump {name} to version {version}\n\nThis pull request bumps {name} to version [{version}](https://github.com/{repository}/releases/tag/{tag_prefix}{version})."
         )
     }
 }

@@ -22,6 +22,7 @@ bumpster <tool> <version>
 
 It updates the version, commits the change to a new branch, pushes it, and prints the title and description of the pull request to open. The supported tools are:
 
+- **`dprint <plugin>`** — a dprint plugin in the `plugins` field of `dprint.json`, where `<plugin>` is one of `json`, `markdown`, `toml`, or `yaml` (for `g-plane/pretty_yaml`).
 - **`node`** — Node.js, in the `devEngines.runtime` field of `package.json`, with `pnpm-lock.yaml` updated to match.
 - **`pnpm`** — pnpm, in the `packageManager` field of `package.json`.
 
