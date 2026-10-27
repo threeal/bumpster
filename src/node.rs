@@ -1,7 +1,7 @@
 //! Bumping the version of Node.js in the `devEngines.runtime` field of a
 //! `package.json` file.
 
-use crate::tool::{self, replace_once};
+use crate::tool::{self, Edit, replace_once};
 use crate::{command, git};
 use anyhow::{Context, Result, bail};
 
@@ -20,34 +20,46 @@ use anyhow::{Context, Result, bail};
 #[cfg(not(tarpaulin_include))] // Runs commands, so it is not unit tested.
 pub fn bump(version: &str) -> Result<String> {
     let paths = ["package.json", "pnpm-lock.yaml"];
+    println!("checking that the repository is ready");
     tool::check_ready(&paths)?;
-    let content = bump_package_json(&tool::read("package.json")?, version)?;
+    let edit = bump_package_json(&tool::read("package.json")?, version)?;
 
     let branch = tool::branch_name("node", version);
+    println!("creating branch {branch}");
     git::create_branch(&branch)?;
-    tool::write("package.json", &content)?;
+    println!(
+        "updating devEngines.runtime.version in package.json: {} -> {}",
+        edit.from, edit.to
+    );
+    tool::write("package.json", &edit.content)?;
+    println!("updating pnpm-lock.yaml (pnpm install --lockfile-only)");
     command::run("pnpm", &["install", "--lockfile-only"])?;
+    println!("committing {}", paths.join(" and "));
     git::commit(&tool::commit_message("Node.js", version), &paths)?;
+    println!("pushing {branch} to origin");
     git::push(&branch)?;
 
+    println!("opening a pull request");
     tool::open_pull_request("Node.js", "nodejs/node", "v", version)
 }
 
-/// Returns the content of a `package.json` file with Node.js bumped to the
-/// given version, keeping the range prefix and editing only the version text
-/// to keep the rest of the file as is.
-fn bump_package_json(package_json: &str, version: &str) -> Result<String> {
+/// Returns the edit of a `package.json` file with Node.js bumped to the given
+/// version, keeping the range prefix and editing only the version text to keep
+/// the rest of the file as is.
+fn bump_package_json(package_json: &str, version: &str) -> Result<Edit> {
     let range = read_range(package_json)?;
     let (prefix, current) = tool::split_range(&range, "devEngines.runtime.version")?;
     if current == version {
         bail!("Node.js is already at version {version}");
     }
 
-    replace_once(
-        package_json,
-        &format!("\"{range}\""),
-        &format!("\"{prefix}{version}\""),
-    )
+    let to = format!("{prefix}{version}");
+    let content = replace_once(package_json, &format!("\"{range}\""), &format!("\"{to}\""))?;
+    Ok(Edit {
+        content,
+        from: range,
+        to,
+    })
 }
 
 /// Reads the Node.js version range from the `devEngines.runtime` field of a
@@ -88,10 +100,11 @@ mod tests {
     #[test]
     fn bump_package_json_version() {
         for prefix in ["^", "~", ""] {
-            assert_eq!(
-                bump_package_json(&package_json(&format!("{prefix}24.22.0")), "24.22.1").unwrap(),
-                package_json(&format!("{prefix}24.22.1"))
-            );
+            let edit =
+                bump_package_json(&package_json(&format!("{prefix}24.22.0")), "24.22.1").unwrap();
+            assert_eq!(edit.content, package_json(&format!("{prefix}24.22.1")));
+            assert_eq!(edit.from, format!("{prefix}24.22.0"));
+            assert_eq!(edit.to, format!("{prefix}24.22.1"));
         }
     }
 

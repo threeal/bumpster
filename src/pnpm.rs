@@ -1,7 +1,7 @@
 //! Bumping the version of pnpm in the `devEngines.packageManager` or
 //! `packageManager` field of a `package.json` file.
 
-use crate::tool::{self, replace_once};
+use crate::tool::{self, Edit, replace_once};
 use crate::{command, git};
 use anyhow::{Context, Result, bail};
 
@@ -30,29 +30,42 @@ enum Field {
 /// step of it fails.
 #[cfg(not(tarpaulin_include))] // Runs commands, so it is not unit tested.
 pub fn bump(version: &str) -> Result<String> {
-    let (content, field) = bump_package_json(&tool::read("package.json")?, version)?;
-    let paths: &[&str] = match field {
-        Field::DevEngines => &["package.json", "pnpm-lock.yaml"],
-        Field::PackageManager => &["package.json"],
+    let (edit, field) = bump_package_json(&tool::read("package.json")?, version)?;
+    let (paths, field_name): (&[&str], _) = match field {
+        Field::DevEngines => (
+            &["package.json", "pnpm-lock.yaml"],
+            "devEngines.packageManager.version",
+        ),
+        Field::PackageManager => (&["package.json"], "packageManager"),
     };
+    println!("checking that the repository is ready");
     tool::check_ready(paths)?;
 
     let branch = tool::branch_name("pnpm", version);
+    println!("creating branch {branch}");
     git::create_branch(&branch)?;
-    tool::write("package.json", &content)?;
+    println!(
+        "updating {field_name} in package.json: {} -> {}",
+        edit.from, edit.to
+    );
+    tool::write("package.json", &edit.content)?;
     if field == Field::DevEngines {
+        println!("updating pnpm-lock.yaml (pnpm install --lockfile-only)");
         command::run("pnpm", &["install", "--lockfile-only"])?;
     }
+    println!("committing {}", paths.join(" and "));
     git::commit(&tool::commit_message("pnpm", version), paths)?;
+    println!("pushing {branch} to origin");
     git::push(&branch)?;
 
+    println!("opening a pull request");
     tool::open_pull_request("pnpm", "pnpm/pnpm", "v", version)
 }
 
-/// Returns the content of a `package.json` file with pnpm bumped to the given
+/// Returns the edit of a `package.json` file with pnpm bumped to the given
 /// version, along with the field it was bumped in, editing only the version
 /// text to keep the rest of the file as is.
-fn bump_package_json(package_json: &str, version: &str) -> Result<(String, Field)> {
+fn bump_package_json(package_json: &str, version: &str) -> Result<(Edit, Field)> {
     let value: serde_json::Value =
         serde_json::from_str(package_json).context("failed to parse package.json")?;
 
@@ -63,12 +76,14 @@ fn bump_package_json(package_json: &str, version: &str) -> Result<(String, Field
             bail!("pnpm is already at version {version}");
         }
 
-        let content = replace_once(
-            package_json,
-            &format!("\"{range}\""),
-            &format!("\"{prefix}{version}\""),
-        )?;
-        return Ok((content, Field::DevEngines));
+        let to = format!("{prefix}{version}");
+        let content = replace_once(package_json, &format!("\"{range}\""), &format!("\"{to}\""))?;
+        let edit = Edit {
+            content,
+            from: range.to_string(),
+            to,
+        };
+        return Ok((edit, Field::DevEngines));
     }
 
     let Some(package_manager) = value.get("packageManager") else {
@@ -79,12 +94,10 @@ fn bump_package_json(package_json: &str, version: &str) -> Result<(String, Field
         bail!("pnpm is already at version {version}");
     }
 
-    let content = replace_once(
-        package_json,
-        &format!("\"pnpm@{current}\""),
-        &format!("\"pnpm@{version}\""),
-    )?;
-    Ok((content, Field::PackageManager))
+    let from = format!("pnpm@{current}");
+    let to = format!("pnpm@{version}");
+    let content = replace_once(package_json, &format!("\"{from}\""), &format!("\"{to}\""))?;
+    Ok((Edit { content, from, to }, Field::PackageManager))
 }
 
 /// Reads the pnpm version range from the value of the
@@ -137,30 +150,29 @@ mod tests {
     #[test]
     fn bump_dev_engines_version() {
         for prefix in ["^", "~", ""] {
+            let (edit, field) = bump_package_json(
+                &dev_engines_package_json(&format!("{prefix}11.28.7")),
+                "12.15.0",
+            )
+            .unwrap();
             assert_eq!(
-                bump_package_json(
-                    &dev_engines_package_json(&format!("{prefix}11.28.7")),
-                    "12.15.0"
-                )
-                .unwrap(),
-                (
-                    dev_engines_package_json(&format!("{prefix}12.15.0")),
-                    Field::DevEngines
-                )
+                edit.content,
+                dev_engines_package_json(&format!("{prefix}12.15.0"))
             );
+            assert_eq!(edit.from, format!("{prefix}11.28.7"));
+            assert_eq!(edit.to, format!("{prefix}12.15.0"));
+            assert_eq!(field, Field::DevEngines);
         }
     }
 
     #[test]
     fn bump_dev_engines_over_package_manager() {
         let package_json = r#"{ "packageManager": "pnpm@11.28.7", "devEngines": { "packageManager": { "name": "pnpm", "version": "^11.28.7" } } }"#;
-        assert_eq!(
-            bump_package_json(package_json, "12.15.0").unwrap(),
-            (
-                package_json.replace("^11.28.7", "^12.15.0"),
-                Field::DevEngines
-            )
-        );
+        let (edit, field) = bump_package_json(package_json, "12.15.0").unwrap();
+        assert_eq!(edit.content, package_json.replace("^11.28.7", "^12.15.0"));
+        assert_eq!(edit.from, "^11.28.7");
+        assert_eq!(edit.to, "^12.15.0");
+        assert_eq!(field, Field::DevEngines);
     }
 
     #[test]
@@ -188,13 +200,14 @@ mod tests {
     #[test]
     fn bump_package_manager_version() {
         let package_json = "{\n  \"name\": \"foo\",\n  \"packageManager\": \"pnpm@11.28.7\"\n}\n";
+        let (edit, field) = bump_package_json(package_json, "11.28.8").unwrap();
         assert_eq!(
-            bump_package_json(package_json, "11.28.8").unwrap(),
-            (
-                "{\n  \"name\": \"foo\",\n  \"packageManager\": \"pnpm@11.28.8\"\n}\n".to_string(),
-                Field::PackageManager
-            )
+            edit.content,
+            "{\n  \"name\": \"foo\",\n  \"packageManager\": \"pnpm@11.28.8\"\n}\n"
         );
+        assert_eq!(edit.from, "pnpm@11.28.7");
+        assert_eq!(edit.to, "pnpm@11.28.8");
+        assert_eq!(field, Field::PackageManager);
     }
 
     #[test]

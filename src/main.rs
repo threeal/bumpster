@@ -46,7 +46,7 @@ fn main() {
     };
 
     match result {
-        Ok(url) => println!("{url}"),
+        Ok(url) => println!("opened {url}"),
         Err(err) => {
             eprintln!("error: {err:#}");
             std::process::exit(1);

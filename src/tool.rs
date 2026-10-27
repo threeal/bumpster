@@ -81,6 +81,18 @@ pub fn pull_request_body(name: &str, repository: &str, tag_prefix: &str, version
     )
 }
 
+/// The edited content of a file, along with the values it changed, to show the
+/// change in the log.
+#[derive(Debug)]
+pub struct Edit {
+    /// The content of the file after the edit.
+    pub content: String,
+    /// The value before the edit.
+    pub from: String,
+    /// The value after the edit.
+    pub to: String,
+}
+
 /// Replaces the only occurrence of `from` in `content` with `to`, so a version
 /// can be edited without rewriting the rest of a file.
 pub fn replace_once(content: &str, from: &str, to: &str) -> Result<String> {

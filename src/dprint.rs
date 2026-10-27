@@ -2,7 +2,7 @@
 //! `dprint.json` file.
 
 use crate::git;
-use crate::tool::{self, replace_once};
+use crate::tool::{self, Edit, replace_once};
 use anyhow::{Result, bail};
 
 /// A dprint plugin pinned by its URL in `dprint.json`.
@@ -70,35 +70,49 @@ pub static PLUGINS: [(&str, Plugin); 4] = [
 /// step of it fails.
 #[cfg(not(tarpaulin_include))] // Runs commands, so it is not unit tested.
 pub fn bump(plugin: &Plugin, version: &str) -> Result<String> {
+    println!("checking that the repository is ready");
     tool::check_ready(&["dprint.json"])?;
-    let content = bump_url(&tool::read("dprint.json")?, version, plugin.url_prefix)?;
+    let edit = bump_url(&tool::read("dprint.json")?, version, plugin.url_prefix)?;
 
     let branch = tool::branch_name(plugin.name, version);
+    println!("creating branch {branch}");
     git::create_branch(&branch)?;
-    tool::write("dprint.json", &content)?;
+    println!(
+        "updating {} in dprint.json: {} -> {}",
+        plugin.name, edit.from, edit.to
+    );
+    tool::write("dprint.json", &edit.content)?;
+    println!("committing dprint.json");
     git::commit(
         &tool::commit_message(plugin.name, version),
         &["dprint.json"],
     )?;
+    println!("pushing {branch} to origin");
     git::push(&branch)?;
 
+    println!("opening a pull request");
     tool::open_pull_request(plugin.name, plugin.repository, plugin.tag_prefix, version)
 }
 
-/// Returns the content of a `dprint.json` file with the plugin URL starting
-/// with `prefix` bumped to the given version, editing it as text so comments
-/// and formatting are kept.
-fn bump_url(dprint_json: &str, version: &str, prefix: &str) -> Result<String> {
+/// Returns the edit of a `dprint.json` file with the plugin URL starting with
+/// `prefix` bumped to the given version, editing it as text so comments and
+/// formatting are kept.
+fn bump_url(dprint_json: &str, version: &str, prefix: &str) -> Result<Edit> {
     let current = read_version(dprint_json, prefix)?;
     if current == version {
         bail!("{prefix}{version}.wasm is already in dprint.json");
     }
 
-    replace_once(
+    let content = replace_once(
         dprint_json,
         &format!("{prefix}{current}.wasm"),
         &format!("{prefix}{version}.wasm"),
-    )
+    )?;
+    Ok(Edit {
+        content,
+        from: current.to_string(),
+        to: version.to_string(),
+    })
 }
 
 /// Reads the version from the plugin URL starting with `prefix` in a
@@ -145,11 +159,12 @@ mod tests {
         ];
         for ((name, plugin), (short_name, from, to)) in PLUGINS.iter().zip(cases) {
             assert_eq!(*name, short_name);
+            let current = from.rsplit_once('-').unwrap().1.trim_start_matches('v');
             let version = to.rsplit_once('-').unwrap().1.trim_start_matches('v');
-            assert_eq!(
-                bump_url(DPRINT_JSON, version, plugin.url_prefix).unwrap(),
-                DPRINT_JSON.replace(from, to)
-            );
+            let edit = bump_url(DPRINT_JSON, version, plugin.url_prefix).unwrap();
+            assert_eq!(edit.content, DPRINT_JSON.replace(from, to));
+            assert_eq!(edit.from, current);
+            assert_eq!(edit.to, version);
         }
     }
 
