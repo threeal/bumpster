@@ -20,7 +20,7 @@ Run Bumpster on the `main` branch of a repository with a clean working tree, wit
 bumpster <tool> <version>
 ```
 
-It updates the version, commits the change to a new branch, pushes it, opens a pull request for it, and prints the pull request's URL. The supported tools are:
+It updates the version, commits the change to a new branch, pushes it, and opens a pull request for it, logging each step as it runs and ending with the pull request's URL. The supported tools are:
 
 - **`dprint <plugin>`** — a dprint plugin in the `plugins` field of `dprint.json`, where `<plugin>` is one of `json`, `markdown`, `toml`, or `yaml` (for `g-plane/pretty_yaml`).
 - **`node`** — Node.js, in the `devEngines.runtime` field of `package.json`, with `pnpm-lock.yaml` updated to match.
