@@ -24,7 +24,7 @@ fn main() {
         )
         .subcommand(
             clap::Command::new("pnpm")
-                .about("Bump pnpm in the packageManager field of package.json")
+                .about("Bump pnpm in the devEngines.packageManager or packageManager field of package.json")
                 .arg(version()),
         )
         .get_matches();
