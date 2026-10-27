@@ -59,9 +59,10 @@ pub static PLUGINS: [(&str, Plugin); 4] = [
 ];
 
 /// Bumps a dprint plugin in the `plugins` field of `dprint.json` to the given
-/// version, then commits and pushes the change to a new branch.
+/// version, then commits the change to a new branch, pushes it, and opens a
+/// pull request for it.
 ///
-/// Returns the title and description of the pull request to open for it.
+/// Returns the URL of the opened pull request.
 ///
 /// # Errors
 ///
@@ -81,12 +82,7 @@ pub fn bump(plugin: &Plugin, version: &str) -> Result<String> {
     )?;
     git::push(&branch)?;
 
-    Ok(tool::pull_request(
-        plugin.name,
-        plugin.repository,
-        plugin.tag_prefix,
-        version,
-    ))
+    tool::open_pull_request(plugin.name, plugin.repository, plugin.tag_prefix, version)
 }
 
 /// Returns the content of a `dprint.json` file with the plugin URL starting
@@ -219,10 +215,13 @@ mod tests {
         for ((_, plugin), (name, url)) in PLUGINS.iter().zip(cases) {
             assert_eq!(plugin.name, name);
             assert_eq!(
-                tool::pull_request(plugin.name, plugin.repository, plugin.tag_prefix, "0.25.3"),
-                format!(
-                    "Bump {name} to version 0.25.3\n\nThis pull request bumps {name} to version [0.25.3]({url})."
-                )
+                tool::pull_request_body(
+                    plugin.name,
+                    plugin.repository,
+                    plugin.tag_prefix,
+                    "0.25.3"
+                ),
+                format!("This pull request bumps {name} to version [0.25.3]({url}).")
             );
         }
     }

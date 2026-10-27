@@ -15,14 +15,14 @@ enum Field {
     PackageManager,
 }
 
-/// Bumps pnpm in `package.json` to the given version, then commits and pushes
-/// the change to a new branch.
+/// Bumps pnpm in `package.json` to the given version, then commits the change
+/// to a new branch, pushes it, and opens a pull request for it.
 ///
 /// pnpm is bumped in the `devEngines.packageManager` field, with
 /// `pnpm-lock.yaml` updated to match, or in the `packageManager` field if the
 /// former is not set.
 ///
-/// Returns the title and description of the pull request to open for it.
+/// Returns the URL of the opened pull request.
 ///
 /// # Errors
 ///
@@ -46,7 +46,7 @@ pub fn bump(version: &str) -> Result<String> {
     git::commit(&tool::commit_message("pnpm", version), paths)?;
     git::push(&branch)?;
 
-    Ok(tool::pull_request("pnpm", "pnpm/pnpm", "v", version))
+    tool::open_pull_request("pnpm", "pnpm/pnpm", "v", version)
 }
 
 /// Returns the content of a `package.json` file with pnpm bumped to the given

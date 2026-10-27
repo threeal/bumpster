@@ -6,10 +6,12 @@ use crate::{command, git};
 use anyhow::{Context, Result, bail};
 
 /// Bumps Node.js in the `devEngines.runtime` field of `package.json` to the
-/// given version, with `pnpm-lock.yaml` updated to match, then commits and
-/// pushes the change to a new branch.
+/// given version, with `pnpm-lock.yaml` updated to match.
 ///
-/// Returns the title and description of the pull request to open for it.
+/// The change is then committed to a new branch, pushed, and opened as a pull
+/// request.
+///
+/// Returns the URL of the opened pull request.
 ///
 /// # Errors
 ///
@@ -28,7 +30,7 @@ pub fn bump(version: &str) -> Result<String> {
     git::commit(&tool::commit_message("Node.js", version), &paths)?;
     git::push(&branch)?;
 
-    Ok(tool::pull_request("Node.js", "nodejs/node", "v", version))
+    tool::open_pull_request("Node.js", "nodejs/node", "v", version)
 }
 
 /// Returns the content of a `package.json` file with Node.js bumped to the
