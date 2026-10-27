@@ -36,7 +36,7 @@ pub fn bump(version: &str) -> Result<String> {
 /// to keep the rest of the file as is.
 fn bump_package_json(package_json: &str, version: &str) -> Result<String> {
     let range = read_range(package_json)?;
-    let (prefix, current) = split_range(&range)?;
+    let (prefix, current) = tool::split_range(&range, "devEngines.runtime.version")?;
     if current == version {
         bail!("Node.js is already at version {version}");
     }
@@ -71,22 +71,6 @@ fn read_range(package_json: &str) -> Result<String> {
         .context("devEngines.runtime.version is not set")?;
 
     Ok(range.to_string())
-}
-
-/// Splits a version range into its prefix (`^`, `~`, or none) and version,
-/// refusing anything more complex.
-fn split_range(range: &str) -> Result<(&str, &str)> {
-    let version = range.trim_start_matches(['^', '~']);
-    let prefix = &range[..range.len() - version.len()];
-
-    if prefix.len() > 1
-        || version.is_empty()
-        || !version.chars().all(|c| c.is_ascii_digit() || c == '.')
-    {
-        bail!("devEngines.runtime.version is not a simple range: {range}");
-    }
-
-    Ok((prefix, version))
 }
 
 #[cfg(test)]
