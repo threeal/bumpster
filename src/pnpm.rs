@@ -1,20 +1,32 @@
 //! Bumping the version of pnpm in the `packageManager` field of a
 //! `package.json` file.
 
-use crate::tool::{Tool, replace_once};
+use crate::git;
+use crate::tool::{self, replace_once};
 use anyhow::{Context, Result, bail};
 
-/// pnpm, bumped in the `packageManager` field of `package.json`.
-pub const TOOL: Tool = Tool {
-    id: "pnpm",
-    name: "pnpm",
-    repository: "pnpm/pnpm",
-    tag_prefix: "v",
-    file: "package.json",
-    edit: bump_package_json,
-    command: None,
-    paths: &["package.json"],
-};
+/// Bumps pnpm in the `packageManager` field of `package.json` to the given
+/// version, then commits and pushes the change to a new branch.
+///
+/// Returns the title and description of the pull request to open for it.
+///
+/// # Errors
+///
+/// Returns an error if the repository is not ready for the bump, or if any
+/// step of it fails.
+#[cfg(not(tarpaulin_include))] // Runs commands, so it is not unit tested.
+pub fn bump(version: &str) -> Result<String> {
+    tool::check_ready(&["package.json"])?;
+    let content = bump_package_json(&tool::read("package.json")?, version)?;
+
+    let branch = tool::branch_name("pnpm", version);
+    git::create_branch(&branch)?;
+    tool::write("package.json", &content)?;
+    git::commit(&tool::commit_message("pnpm", version), &["package.json"])?;
+    git::push(&branch)?;
+
+    Ok(tool::pull_request("pnpm", "pnpm/pnpm", "v", version))
+}
 
 /// Returns the content of a `package.json` file with pnpm bumped to the given
 /// version, editing only the version text to keep the rest of the file as is.
@@ -112,18 +124,5 @@ mod tests {
         for (package_json, error) in cases {
             assert_eq!(read_version(package_json).unwrap_err().to_string(), error);
         }
-    }
-
-    #[test]
-    fn format_output() {
-        assert_eq!(TOOL.branch_name("11.28.8"), "bump-pnpm-11.28.8");
-        assert_eq!(
-            TOOL.commit_message("11.28.8"),
-            "bump pnpm to version 11.28.8"
-        );
-        assert_eq!(
-            TOOL.pull_request("11.28.8"),
-            "Bump pnpm to version 11.28.8\n\nThis pull request bumps pnpm to version [11.28.8](https://github.com/pnpm/pnpm/releases/tag/v11.28.8)."
-        );
     }
 }

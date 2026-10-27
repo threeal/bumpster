@@ -29,30 +29,35 @@ fn main() {
         )
         .get_matches();
 
-    let (tool, matches) = match matches.subcommand() {
+    let result = match matches.subcommand() {
         Some(("dprint", matches)) => {
             let plugin = matches
                 .get_one::<String>("plugin")
                 .map_or("", String::as_str);
-            let (_, tool) = bumpster::dprint::PLUGINS
+            let (_, plugin) = bumpster::dprint::PLUGINS
                 .iter()
                 .find(|(name, _)| *name == plugin)
                 .expect("the plugin is validated by clap");
-            (tool, matches)
+            bumpster::dprint::bump(plugin, target(matches))
         }
-        Some(("node", matches)) => (&bumpster::node::TOOL, matches),
-        Some(("pnpm", matches)) => (&bumpster::pnpm::TOOL, matches),
+        Some(("node", matches)) => bumpster::node::bump(target(matches)),
+        Some(("pnpm", matches)) => bumpster::pnpm::bump(target(matches)),
         _ => unreachable!("a subcommand is required"),
     };
-    let version = matches
-        .get_one::<String>("target")
-        .map_or("", String::as_str);
 
-    match tool.bump(version) {
+    match result {
         Ok(pull_request) => println!("{pull_request}"),
         Err(err) => {
             eprintln!("error: {err:#}");
             std::process::exit(1);
         }
     }
+}
+
+/// Returns the version to bump to, given as the target argument.
+#[cfg(not(tarpaulin_include))]
+fn target(matches: &clap::ArgMatches) -> &str {
+    matches
+        .get_one::<String>("target")
+        .map_or("", String::as_str)
 }

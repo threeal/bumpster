@@ -1,72 +1,93 @@
 //! Bumping the version of dprint plugins pinned by their URLs in a
 //! `dprint.json` file.
 
-use crate::tool::{Tool, replace_once};
+use crate::git;
+use crate::tool::{self, replace_once};
 use anyhow::{Result, bail};
 
+/// A dprint plugin pinned by its URL in `dprint.json`.
+pub struct Plugin {
+    /// The name of the plugin, used in branch names, commit messages, and
+    /// pull requests.
+    name: &'static str,
+    /// The GitHub repository of the plugin, used to link its release notes.
+    repository: &'static str,
+    /// The text before the version in the plugin's release tags, such as `v`.
+    tag_prefix: &'static str,
+    /// The text before the version in the plugin's URL.
+    url_prefix: &'static str,
+}
+
 /// The supported dprint plugins, each paired with its short name.
-pub static PLUGINS: [(&str, Tool); 4] = [
+pub static PLUGINS: [(&str, Plugin); 4] = [
     (
         "json",
-        Tool {
-            id: "dprint-plugin-json",
+        Plugin {
             name: "dprint-plugin-json",
             repository: "dprint/dprint-plugin-json",
             tag_prefix: "",
-            file: "dprint.json",
-            edit: |content, version| bump_url(content, version, "https://plugins.dprint.dev/json-"),
-            command: None,
-            paths: &["dprint.json"],
+            url_prefix: "https://plugins.dprint.dev/json-",
         },
     ),
     (
         "markdown",
-        Tool {
-            id: "dprint-plugin-markdown",
+        Plugin {
             name: "dprint-plugin-markdown",
             repository: "dprint/dprint-plugin-markdown",
             tag_prefix: "",
-            file: "dprint.json",
-            edit: |content, version| {
-                bump_url(content, version, "https://plugins.dprint.dev/markdown-")
-            },
-            command: None,
-            paths: &["dprint.json"],
+            url_prefix: "https://plugins.dprint.dev/markdown-",
         },
     ),
     (
         "toml",
-        Tool {
-            id: "dprint-plugin-toml",
+        Plugin {
             name: "dprint-plugin-toml",
             repository: "dprint/dprint-plugin-toml",
             tag_prefix: "",
-            file: "dprint.json",
-            edit: |content, version| bump_url(content, version, "https://plugins.dprint.dev/toml-"),
-            command: None,
-            paths: &["dprint.json"],
+            url_prefix: "https://plugins.dprint.dev/toml-",
         },
     ),
     (
         "yaml",
-        Tool {
-            id: "pretty_yaml",
+        Plugin {
             name: "pretty_yaml",
             repository: "g-plane/pretty_yaml",
             tag_prefix: "v",
-            file: "dprint.json",
-            edit: |content, version| {
-                bump_url(
-                    content,
-                    version,
-                    "https://plugins.dprint.dev/g-plane/pretty_yaml-v",
-                )
-            },
-            command: None,
-            paths: &["dprint.json"],
+            url_prefix: "https://plugins.dprint.dev/g-plane/pretty_yaml-v",
         },
     ),
 ];
+
+/// Bumps a dprint plugin in the `plugins` field of `dprint.json` to the given
+/// version, then commits and pushes the change to a new branch.
+///
+/// Returns the title and description of the pull request to open for it.
+///
+/// # Errors
+///
+/// Returns an error if the repository is not ready for the bump, or if any
+/// step of it fails.
+#[cfg(not(tarpaulin_include))] // Runs commands, so it is not unit tested.
+pub fn bump(plugin: &Plugin, version: &str) -> Result<String> {
+    tool::check_ready(&["dprint.json"])?;
+    let content = bump_url(&tool::read("dprint.json")?, version, plugin.url_prefix)?;
+
+    let branch = tool::branch_name(plugin.name, version);
+    git::create_branch(&branch)?;
+    tool::write("dprint.json", &content)?;
+    git::commit(
+        &tool::commit_message(plugin.name, version),
+        &["dprint.json"],
+    )?;
+    git::push(&branch)?;
+
+    Ok(tool::pull_request(
+        plugin.name,
+        plugin.repository,
+        plugin.tag_prefix,
+        version,
+    ))
+}
 
 /// Returns the content of a `dprint.json` file with the plugin URL starting
 /// with `prefix` bumped to the given version, editing it as text so comments
@@ -126,11 +147,11 @@ mod tests {
             ("toml", "toml-0.9.0", "toml-0.9.3"),
             ("yaml", "pretty_yaml-v0.6.0", "pretty_yaml-v0.6.3"),
         ];
-        for ((plugin, tool), (name, from, to)) in PLUGINS.iter().zip(cases) {
-            assert_eq!(*plugin, name);
+        for ((name, plugin), (short_name, from, to)) in PLUGINS.iter().zip(cases) {
+            assert_eq!(*name, short_name);
             let version = to.rsplit_once('-').unwrap().1.trim_start_matches('v');
             assert_eq!(
-                (tool.edit)(DPRINT_JSON, version).unwrap(),
+                bump_url(DPRINT_JSON, version, plugin.url_prefix).unwrap(),
                 DPRINT_JSON.replace(from, to)
             );
         }
@@ -195,14 +216,10 @@ mod tests {
                 "https://github.com/g-plane/pretty_yaml/releases/tag/v0.25.3",
             ),
         ];
-        for ((_, tool), (name, url)) in PLUGINS.iter().zip(cases) {
-            assert_eq!(tool.branch_name("0.25.3"), format!("bump-{name}-0.25.3"));
+        for ((_, plugin), (name, url)) in PLUGINS.iter().zip(cases) {
+            assert_eq!(plugin.name, name);
             assert_eq!(
-                tool.commit_message("0.25.3"),
-                format!("bump {name} to version 0.25.3")
-            );
-            assert_eq!(
-                tool.pull_request("0.25.3"),
+                tool::pull_request(plugin.name, plugin.repository, plugin.tag_prefix, "0.25.3"),
                 format!(
                     "Bump {name} to version 0.25.3\n\nThis pull request bumps {name} to version [0.25.3]({url})."
                 )

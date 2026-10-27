@@ -1,102 +1,63 @@
-//! The bump flow shared by every supported tool.
+//! Steps shared by the bump flows of the supported tools.
 
-use anyhow::{Result, bail};
+use crate::git;
+use anyhow::{Context, Result, bail};
 
-/// A tool that can be bumped, described by the parts of the bump flow that
-/// differ between tools.
-pub struct Tool {
-    /// The short name of the tool, used in branch names.
-    pub id: &'static str,
-    /// The display name of the tool, used in commit messages and pull
-    /// requests.
-    pub name: &'static str,
-    /// The GitHub repository of the tool, used to link its release notes.
-    pub repository: &'static str,
-    /// The text before the version in the tool's release tags, such as `v`.
-    pub tag_prefix: &'static str,
-    /// The file that holds the version of the tool.
-    pub file: &'static str,
-    /// Returns the content of `file` with the tool bumped to the given
-    /// version.
-    pub edit: fn(&str, &str) -> Result<String>,
-    /// A command to run after editing `file`, as a program and its arguments.
-    pub command: Option<(&'static str, &'static [&'static str])>,
-    /// The files to commit, which must all exist before the bump.
-    pub paths: &'static [&'static str],
+/// Checks that the current repository is ready for a bump: on the main branch,
+/// with a clean working tree, and with every given path existing.
+#[cfg(not(tarpaulin_include))] // Runs commands, so it is not unit tested.
+pub fn check_ready(paths: &[&str]) -> Result<()> {
+    if git::current_branch()? != "main" {
+        bail!("not on the main branch");
+    }
+    if !git::is_clean()? {
+        bail!("the working tree is not clean");
+    }
+    for path in paths {
+        if !std::path::Path::new(path).exists() {
+            bail!("{path} does not exist");
+        }
+    }
+    Ok(())
 }
 
-impl Tool {
-    /// Bumps the tool in the current repository to the given version, then
-    /// commits and pushes the change to a new branch.
-    ///
-    /// Returns the title and description of the pull request to open for it.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the repository is not ready for the bump, or if any
-    /// step of it fails.
-    #[cfg(not(tarpaulin_include))] // Runs commands, so it is not unit tested.
-    pub fn bump(&self, version: &str) -> Result<String> {
-        use crate::{command, git};
-        use anyhow::Context;
+/// Reads the content of a file to edit.
+#[cfg(not(tarpaulin_include))] // Reads a real file, so it is not unit tested.
+pub fn read(path: &str) -> Result<String> {
+    std::fs::read_to_string(path).with_context(|| format!("failed to read {path}"))
+}
 
-        if git::current_branch()? != "main" {
-            bail!("not on the main branch");
-        }
-        if !git::is_clean()? {
-            bail!("the working tree is not clean");
-        }
-        for path in self.paths {
-            if !std::path::Path::new(path).exists() {
-                bail!("{path} does not exist");
-            }
-        }
+/// Writes the edited content of a file.
+#[cfg(not(tarpaulin_include))] // Writes a real file, so it is not unit tested.
+pub fn write(path: &str, content: &str) -> Result<()> {
+    std::fs::write(path, content).with_context(|| format!("failed to write {path}"))
+}
 
-        let content = std::fs::read_to_string(self.file)
-            .with_context(|| format!("failed to read {}", self.file))?;
-        let content = (self.edit)(&content, version)?;
+/// Returns the name of the branch for bumping a tool to the given version.
+#[must_use]
+pub fn branch_name(id: &str, version: &str) -> String {
+    format!("bump-{id}-{version}")
+}
 
-        let branch = self.branch_name(version);
-        git::create_branch(&branch)?;
-        std::fs::write(self.file, content)
-            .with_context(|| format!("failed to write {}", self.file))?;
-        if let Some((program, args)) = self.command {
-            command::run(program, args)?;
-        }
-        git::commit(&self.commit_message(version), self.paths)?;
-        git::push(&branch)?;
+/// Returns the commit message for bumping a tool to the given version.
+#[must_use]
+pub fn commit_message(name: &str, version: &str) -> String {
+    format!("bump {name} to version {version}")
+}
 
-        Ok(self.pull_request(version))
-    }
-
-    /// Returns the name of the branch for bumping to the given version.
-    #[must_use]
-    pub fn branch_name(&self, version: &str) -> String {
-        format!("bump-{}-{version}", self.id)
-    }
-
-    /// Returns the commit message for bumping to the given version.
-    #[must_use]
-    pub fn commit_message(&self, version: &str) -> String {
-        format!("bump {} to version {version}", self.name)
-    }
-
-    /// Returns the title and description of the pull request for bumping to
-    /// the given version.
-    #[must_use]
-    pub fn pull_request(&self, version: &str) -> String {
-        let name = self.name;
-        let repository = self.repository;
-        let tag_prefix = self.tag_prefix;
-        format!(
-            "Bump {name} to version {version}\n\nThis pull request bumps {name} to version [{version}](https://github.com/{repository}/releases/tag/{tag_prefix}{version})."
-        )
-    }
+/// Returns the title and description of the pull request for bumping a tool
+/// to the given version, linking to its release in the given GitHub
+/// repository, where tags are the version prefixed by `tag_prefix`.
+#[must_use]
+pub fn pull_request(name: &str, repository: &str, tag_prefix: &str, version: &str) -> String {
+    format!(
+        "Bump {name} to version {version}\n\nThis pull request bumps {name} to version [{version}](https://github.com/{repository}/releases/tag/{tag_prefix}{version})."
+    )
 }
 
 /// Replaces the only occurrence of `from` in `content` with `to`, so a version
 /// can be edited without rewriting the rest of a file.
-pub(crate) fn replace_once(content: &str, from: &str, to: &str) -> Result<String> {
+pub fn replace_once(content: &str, from: &str, to: &str) -> Result<String> {
     let count = content.matches(from).count();
     if count != 1 {
         bail!("expected exactly one {from}, found {count}");
@@ -107,6 +68,19 @@ pub(crate) fn replace_once(content: &str, from: &str, to: &str) -> Result<String
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn format_output() {
+        assert_eq!(branch_name("node", "24.22.1"), "bump-node-24.22.1");
+        assert_eq!(
+            commit_message("Node.js", "24.22.1"),
+            "bump Node.js to version 24.22.1"
+        );
+        assert_eq!(
+            pull_request("Node.js", "nodejs/node", "v", "24.22.1"),
+            "Bump Node.js to version 24.22.1\n\nThis pull request bumps Node.js to version [24.22.1](https://github.com/nodejs/node/releases/tag/v24.22.1)."
+        );
+    }
 
     #[test]
     fn replace_once_single() {

@@ -1,21 +1,35 @@
 //! Bumping the version of Node.js in the `devEngines.runtime` field of a
 //! `package.json` file.
 
-use crate::tool::{Tool, replace_once};
+use crate::tool::{self, replace_once};
+use crate::{command, git};
 use anyhow::{Context, Result, bail};
 
-/// Node.js, bumped in the `devEngines.runtime` field of `package.json`, with
-/// `pnpm-lock.yaml` updated to match.
-pub const TOOL: Tool = Tool {
-    id: "node",
-    name: "Node.js",
-    repository: "nodejs/node",
-    tag_prefix: "v",
-    file: "package.json",
-    edit: bump_package_json,
-    command: Some(("pnpm", &["install", "--lockfile-only"])),
-    paths: &["package.json", "pnpm-lock.yaml"],
-};
+/// Bumps Node.js in the `devEngines.runtime` field of `package.json` to the
+/// given version, with `pnpm-lock.yaml` updated to match, then commits and
+/// pushes the change to a new branch.
+///
+/// Returns the title and description of the pull request to open for it.
+///
+/// # Errors
+///
+/// Returns an error if the repository is not ready for the bump, or if any
+/// step of it fails.
+#[cfg(not(tarpaulin_include))] // Runs commands, so it is not unit tested.
+pub fn bump(version: &str) -> Result<String> {
+    let paths = ["package.json", "pnpm-lock.yaml"];
+    tool::check_ready(&paths)?;
+    let content = bump_package_json(&tool::read("package.json")?, version)?;
+
+    let branch = tool::branch_name("node", version);
+    git::create_branch(&branch)?;
+    tool::write("package.json", &content)?;
+    command::run("pnpm", &["install", "--lockfile-only"])?;
+    git::commit(&tool::commit_message("Node.js", version), &paths)?;
+    git::push(&branch)?;
+
+    Ok(tool::pull_request("Node.js", "nodejs/node", "v", version))
+}
 
 /// Returns the content of a `package.json` file with Node.js bumped to the
 /// given version, keeping the range prefix and editing only the version text
@@ -152,18 +166,5 @@ mod tests {
         for (package_json, error) in cases {
             assert_eq!(read_range(package_json).unwrap_err().to_string(), error);
         }
-    }
-
-    #[test]
-    fn format_output() {
-        assert_eq!(TOOL.branch_name("24.22.1"), "bump-node-24.22.1");
-        assert_eq!(
-            TOOL.commit_message("24.22.1"),
-            "bump Node.js to version 24.22.1"
-        );
-        assert_eq!(
-            TOOL.pull_request("24.22.1"),
-            "Bump Node.js to version 24.22.1\n\nThis pull request bumps Node.js to version [24.22.1](https://github.com/nodejs/node/releases/tag/v24.22.1)."
-        );
     }
 }
