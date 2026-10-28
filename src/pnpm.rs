@@ -26,8 +26,8 @@ enum Field {
 ///
 /// # Errors
 ///
-/// Returns an error if the repository is not ready for the bump, or if any
-/// step of it fails.
+/// Returns an error if the repository is not ready for the bump, if the
+/// version is not released, or if any step of it fails.
 #[cfg(not(tarpaulin_include))] // Runs commands, so it is not unit tested.
 pub fn bump(version: &str) -> Result<String> {
     let (edit, field) = bump_package_json(&tool::read("package.json")?, version)?;
@@ -40,6 +40,8 @@ pub fn bump(version: &str) -> Result<String> {
     };
     println!("checking that the repository is ready");
     tool::check_ready(paths)?;
+    println!("checking that pnpm {version} is released");
+    tool::check_release("pnpm", "pnpm/pnpm", "v", version)?;
 
     let branch = tool::branch_name("pnpm", version);
     println!("creating branch {branch}");

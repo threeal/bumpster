@@ -22,6 +22,21 @@ pub fn check_ready(paths: &[&str]) -> Result<()> {
     gh::check_auth()
 }
 
+/// Checks that the given version of a tool is released, by requesting its
+/// release page in the given GitHub repository, where tags are the version
+/// prefixed by `tag_prefix`.
+#[cfg(not(tarpaulin_include))] // Sends a request, so it is not unit tested.
+pub fn check_release(name: &str, repository: &str, tag_prefix: &str, version: &str) -> Result<()> {
+    let url = release_url(repository, tag_prefix, version);
+    match ureq::head(&url).call() {
+        Ok(_) => Ok(()),
+        Err(ureq::Error::StatusCode(404)) => {
+            bail!("{name} {version} is not released: {url} is not found")
+        }
+        Err(err) => Err(err).with_context(|| format!("failed to request {url}")),
+    }
+}
+
 /// Reads the content of a file to edit.
 #[cfg(not(tarpaulin_include))] // Reads a real file, so it is not unit tested.
 pub fn read(path: &str) -> Result<String> {
@@ -77,8 +92,16 @@ pub fn pull_request_title(name: &str, version: &str) -> String {
 #[must_use]
 pub fn pull_request_body(name: &str, repository: &str, tag_prefix: &str, version: &str) -> String {
     format!(
-        "This pull request bumps {name} to version [{version}](https://github.com/{repository}/releases/tag/{tag_prefix}{version})."
+        "This pull request bumps {name} to version [{version}]({}).",
+        release_url(repository, tag_prefix, version)
     )
+}
+
+/// Returns the URL of the release of the given version in the given GitHub
+/// repository, where tags are the version prefixed by `tag_prefix`.
+#[must_use]
+pub fn release_url(repository: &str, tag_prefix: &str, version: &str) -> String {
+    format!("https://github.com/{repository}/releases/tag/{tag_prefix}{version}")
 }
 
 /// The edited content of a file, along with the values it changed, to show the
@@ -137,6 +160,10 @@ mod tests {
         assert_eq!(
             pull_request_body("Node.js", "nodejs/node", "v", "24.22.1"),
             "This pull request bumps Node.js to version [24.22.1](https://github.com/nodejs/node/releases/tag/v24.22.1)."
+        );
+        assert_eq!(
+            release_url("nodejs/node", "v", "24.22.1"),
+            "https://github.com/nodejs/node/releases/tag/v24.22.1"
         );
     }
 
