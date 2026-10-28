@@ -15,13 +15,15 @@ use anyhow::{Context, Result, bail};
 ///
 /// # Errors
 ///
-/// Returns an error if the repository is not ready for the bump, or if any
-/// step of it fails.
+/// Returns an error if the repository is not ready for the bump, if the
+/// version is not released, or if any step of it fails.
 #[cfg(not(tarpaulin_include))] // Runs commands, so it is not unit tested.
 pub fn bump(version: &str) -> Result<String> {
     let paths = ["package.json", "pnpm-lock.yaml"];
     println!("checking that the repository is ready");
     tool::check_ready(&paths)?;
+    println!("checking that Node.js {version} is released");
+    tool::check_release("Node.js", "nodejs/node", "v", version)?;
     let edit = bump_package_json(&tool::read("package.json")?, version)?;
 
     let branch = tool::branch_name("node", version);

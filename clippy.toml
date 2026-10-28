@@ -1,0 +1,2 @@
+# windows-sys is required at 0.52 by ring, through ureq's rustls, and at 0.61 by clap.
+allowed-duplicate-crates = ["windows-sys"]

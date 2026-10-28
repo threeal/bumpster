@@ -66,12 +66,14 @@ pub static PLUGINS: [(&str, Plugin); 4] = [
 ///
 /// # Errors
 ///
-/// Returns an error if the repository is not ready for the bump, or if any
-/// step of it fails.
+/// Returns an error if the repository is not ready for the bump, if the
+/// version is not released, or if any step of it fails.
 #[cfg(not(tarpaulin_include))] // Runs commands, so it is not unit tested.
 pub fn bump(plugin: &Plugin, version: &str) -> Result<String> {
     println!("checking that the repository is ready");
     tool::check_ready(&["dprint.json"])?;
+    println!("checking that {} {version} is released", plugin.name);
+    tool::check_release(plugin.name, plugin.repository, plugin.tag_prefix, version)?;
     let edit = bump_url(&tool::read("dprint.json")?, version, plugin.url_prefix)?;
 
     let branch = tool::branch_name(plugin.name, version);
