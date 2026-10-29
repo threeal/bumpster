@@ -58,25 +58,38 @@ pub static PLUGINS: [(&str, Plugin); 4] = [
     ),
 ];
 
+/// The tags that a dprint plugin can be bumped to instead of a version, where
+/// the first is the default.
+pub const TAGS: [&str; 1] = ["latest"];
+
 /// Bumps a dprint plugin in the `plugins` field of `dprint.json` to the given
-/// version, then commits the change to a new branch, pushes it, and opens a
-/// pull request for it.
+/// target, which is either a version or one of [`TAGS`].
+///
+/// The change is then committed to a new branch, pushed, and opened as a pull
+/// request.
 ///
 /// Returns the URL of the opened pull request.
 ///
 /// # Errors
 ///
 /// Returns an error if the repository is not ready for the bump, if the
-/// version is not released, or if any step of it fails.
+/// target is not a released version or a known tag, or if any step of it
+/// fails.
 #[cfg(not(tarpaulin_include))] // Runs commands, so it is not unit tested.
-pub fn bump(plugin: &Plugin, version: &str) -> Result<String> {
+pub fn bump(plugin: &Plugin, target: &str) -> Result<String> {
     println!("checking that the repository is ready");
     tool::check_ready(&["dprint.json"])?;
-    println!("checking that {} {version} is released", plugin.name);
-    tool::check_release(plugin.name, plugin.repository, plugin.tag_prefix, version)?;
-    let edit = bump_url(&tool::read("dprint.json")?, version, plugin.url_prefix)?;
+    let version = tool::resolve_target(
+        plugin.name,
+        plugin.repository,
+        plugin.tag_prefix,
+        target,
+        &TAGS,
+        |_| tool::latest_release(plugin.repository, plugin.tag_prefix),
+    )?;
+    let edit = bump_url(&tool::read("dprint.json")?, &version, plugin.url_prefix)?;
 
-    let branch = tool::branch_name(plugin.name, version);
+    let branch = tool::branch_name(plugin.name, &version);
     println!("creating branch {branch}");
     git::create_branch(&branch)?;
     println!(
@@ -86,14 +99,14 @@ pub fn bump(plugin: &Plugin, version: &str) -> Result<String> {
     tool::write("dprint.json", &edit.content)?;
     println!("committing dprint.json");
     git::commit(
-        &tool::commit_message(plugin.name, version),
+        &tool::commit_message(plugin.name, &version),
         &["dprint.json"],
     )?;
     println!("pushing {branch} to origin");
     git::push(&branch)?;
 
     println!("opening a pull request");
-    tool::open_pull_request(plugin.name, plugin.repository, plugin.tag_prefix, version)
+    tool::open_pull_request(plugin.name, plugin.repository, plugin.tag_prefix, &version)
 }
 
 /// Returns the edit of a `dprint.json` file with the plugin URL starting with

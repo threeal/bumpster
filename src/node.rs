@@ -5,8 +5,13 @@ use crate::tool::{self, Edit, replace_once};
 use crate::{command, git};
 use anyhow::{Context, Result, bail};
 
+/// The tags that Node.js can be bumped to instead of a version, where the
+/// first is the default.
+pub const TAGS: [&str; 2] = ["lts", "latest"];
+
 /// Bumps Node.js in the `devEngines.runtime` field of `package.json` to the
-/// given version, with `pnpm-lock.yaml` updated to match.
+/// given target, which is either a version or one of [`TAGS`], with
+/// `pnpm-lock.yaml` updated to match.
 ///
 /// The change is then committed to a new branch, pushed, and opened as a pull
 /// request.
@@ -16,17 +21,19 @@ use anyhow::{Context, Result, bail};
 /// # Errors
 ///
 /// Returns an error if the repository is not ready for the bump, if the
-/// version is not released, or if any step of it fails.
+/// target is not a released version or a known tag, or if any step of it
+/// fails.
 #[cfg(not(tarpaulin_include))] // Runs commands, so it is not unit tested.
-pub fn bump(version: &str) -> Result<String> {
+pub fn bump(target: &str) -> Result<String> {
     let paths = ["package.json", "pnpm-lock.yaml"];
     println!("checking that the repository is ready");
     tool::check_ready(&paths)?;
-    println!("checking that Node.js {version} is released");
-    tool::check_release("Node.js", "nodejs/node", "v", version)?;
-    let edit = bump_package_json(&tool::read("package.json")?, version)?;
+    let version = tool::resolve_target("Node.js", "nodejs/node", "v", target, &TAGS, |tag| {
+        tag_version(&fetch_index()?, tag)
+    })?;
+    let edit = bump_package_json(&tool::read("package.json")?, &version)?;
 
-    let branch = tool::branch_name("node", version);
+    let branch = tool::branch_name("node", &version);
     println!("creating branch {branch}");
     git::create_branch(&branch)?;
     println!(
@@ -37,12 +44,12 @@ pub fn bump(version: &str) -> Result<String> {
     println!("updating pnpm-lock.yaml (pnpm install --lockfile-only)");
     command::run("pnpm", &["install", "--lockfile-only"])?;
     println!("committing {}", paths.join(" and "));
-    git::commit(&tool::commit_message("Node.js", version), &paths)?;
+    git::commit(&tool::commit_message("Node.js", &version), &paths)?;
     println!("pushing {branch} to origin");
     git::push(&branch)?;
 
     println!("opening a pull request");
-    tool::open_pull_request("Node.js", "nodejs/node", "v", version)
+    tool::open_pull_request("Node.js", "nodejs/node", "v", &version)
 }
 
 /// Returns the edit of a `package.json` file with Node.js bumped to the given
@@ -62,6 +69,41 @@ fn bump_package_json(package_json: &str, version: &str) -> Result<Edit> {
         from: range,
         to,
     })
+}
+
+/// Fetches the index of Node.js releases, listing every release from the
+/// newest.
+#[cfg(not(tarpaulin_include))] // Sends a request, so it is not unit tested.
+fn fetch_index() -> Result<String> {
+    let url = "https://nodejs.org/dist/index.json";
+    ureq::get(url)
+        .call()
+        .and_then(|mut response| response.body_mut().read_to_string())
+        .with_context(|| format!("failed to request {url}"))
+}
+
+/// Returns the version of Node.js that a tag refers to in the index of Node.js
+/// releases: the newest release for `latest`, or the newest LTS release for
+/// `lts`.
+fn tag_version(index: &str, tag: &str) -> Result<String> {
+    let index: serde_json::Value =
+        serde_json::from_str(index).context("failed to parse the index of Node.js releases")?;
+    let Some(releases) = index.as_array() else {
+        bail!("the index of Node.js releases is not an array");
+    };
+
+    let release = releases
+        .iter()
+        .find(|release| tag == "latest" || release.get("lts").is_some_and(|lts| lts != false))
+        .with_context(|| format!("no {tag} release is found in the index of Node.js releases"))?;
+    let version = release
+        .get("version")
+        .and_then(serde_json::Value::as_str)
+        .and_then(|version| version.strip_prefix('v'))
+        .filter(|version| tool::is_version(version))
+        .context("a release has no plain version in the index of Node.js releases")?;
+
+    Ok(version.to_string())
 }
 
 /// Reads the Node.js version range from the `devEngines.runtime` field of a
@@ -140,6 +182,54 @@ mod tests {
                     .to_string(),
                 format!("devEngines.runtime.version is not a simple range: {range}")
             );
+        }
+    }
+
+    const INDEX: &str = r#"[
+  { "version": "v26.1.0", "lts": false },
+  { "version": "v24.22.1", "lts": "Krypton" },
+  { "version": "v22.30.0", "lts": "Jod" }
+]"#;
+
+    #[test]
+    fn tag_version_valid() {
+        assert_eq!(tag_version(INDEX, "latest").unwrap(), "26.1.0");
+        assert_eq!(tag_version(INDEX, "lts").unwrap(), "24.22.1");
+    }
+
+    #[test]
+    fn tag_version_invalid() {
+        let cases = [
+            ("{", "lts", "failed to parse the index of Node.js releases"),
+            ("{}", "lts", "the index of Node.js releases is not an array"),
+            (
+                "[]",
+                "latest",
+                "no latest release is found in the index of Node.js releases",
+            ),
+            (
+                r#"[{ "version": "v26.1.0", "lts": false }]"#,
+                "lts",
+                "no lts release is found in the index of Node.js releases",
+            ),
+            (
+                r#"[{ "lts": "Krypton" }]"#,
+                "lts",
+                "a release has no plain version in the index of Node.js releases",
+            ),
+            (
+                r#"[{ "version": "26.1.0" }]"#,
+                "latest",
+                "a release has no plain version in the index of Node.js releases",
+            ),
+            (
+                r#"[{ "version": "v26.0.0-rc.1" }]"#,
+                "latest",
+                "a release has no plain version in the index of Node.js releases",
+            ),
+        ];
+        for (index, tag, error) in cases {
+            assert_eq!(tag_version(index, tag).unwrap_err().to_string(), error);
         }
     }
 

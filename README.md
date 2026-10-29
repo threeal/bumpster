@@ -14,17 +14,17 @@ This installs the `bumpster` command into `~/.cargo/bin`, so it can be run from 
 
 ## Usage
 
-Run Bumpster on the `main` branch of a repository with a clean working tree, with [GitHub CLI](https://cli.github.com/) logged in, passing the tool to bump and the version to bump to:
+Run Bumpster on the `main` branch of a repository with a clean working tree, with [GitHub CLI](https://cli.github.com/) logged in, passing the tool to bump and optionally the version to bump to:
 
 ```sh
-bumpster <tool> <version>
+bumpster <tool> [version]
 ```
 
-It updates the version, commits the change to a new branch, pushes it, and opens a pull request for it, logging each step as it runs and ending with the pull request's URL. The supported tools are:
+The version can also be a tag that resolves to a released version, such as `latest`, with each tool defaulting to one of its tags when no version is given. It updates the version, commits the change to a new branch, pushes it, and opens a pull request for it, logging each step as it runs and ending with the pull request's URL. The supported tools are:
 
-- **`dprint <plugin>`** — a dprint plugin in the `plugins` field of `dprint.json`, where `<plugin>` is one of `json`, `markdown`, `toml`, or `yaml` (for `g-plane/pretty_yaml`).
-- **`node`** — Node.js, in the `devEngines.runtime` field of `package.json`, with `pnpm-lock.yaml` updated to match.
-- **`pnpm`** — pnpm, in the `devEngines.packageManager` field of `package.json` with `pnpm-lock.yaml` updated to match, or in the `packageManager` field if that's not set.
+- **`dprint <plugin>`** — a dprint plugin in the `plugins` field of `dprint.json`, where `<plugin>` is one of `json`, `markdown`, `toml`, or `yaml` (for `g-plane/pretty_yaml`). It defaults to the `latest` tag, the plugin's latest GitHub release.
+- **`node`** — Node.js, in the `devEngines.runtime` field of `package.json`, with `pnpm-lock.yaml` updated to match. It defaults to the `lts` tag, the newest LTS release, and also supports `latest`, the newest release.
+- **`pnpm`** — pnpm, in the `devEngines.packageManager` field of `package.json` with `pnpm-lock.yaml` updated to match, or in the `packageManager` field if that's not set. It defaults to the `latest` tag, pnpm's latest GitHub release.
 
 ## License
 
