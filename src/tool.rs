@@ -2,6 +2,7 @@
 
 use crate::{gh, git};
 use anyhow::{Context, Result, bail};
+use std::cmp::Ordering;
 
 /// Checks that the current repository is ready for a bump: on the main branch,
 /// with a clean working tree, with every given path existing, and with `gh`
@@ -108,6 +109,38 @@ pub fn release_version(repository: &str, tag_prefix: &str, url: &str) -> Result<
         Some(version) if is_version(version) => Ok(version.to_string()),
         _ => bail!("{url} is not a release of a plain version"),
     }
+}
+
+/// Checks that a tool can be bumped from its current version to the given
+/// version, which must be newer.
+pub fn check_newer(name: &str, current: &str, version: &str) -> Result<()> {
+    match compare_versions(version, current) {
+        Ordering::Greater => Ok(()),
+        Ordering::Equal => bail!("{name} is already at version {version}"),
+        Ordering::Less => bail!("{name} is already at version {current}, newer than {version}"),
+    }
+}
+
+/// Compares two plain versions by their numeric parts in order, where a
+/// missing part counts as zero.
+#[must_use]
+pub fn compare_versions(a: &str, b: &str) -> Ordering {
+    fn parts(version: &str) -> Vec<&str> {
+        version
+            .split('.')
+            .map(|part| part.trim_start_matches('0'))
+            .collect()
+    }
+    let (a, b) = (parts(a), parts(b));
+
+    (0..a.len().max(b.len()))
+        .map(|i| {
+            let a = a.get(i).copied().unwrap_or_default();
+            let b = b.get(i).copied().unwrap_or_default();
+            a.len().cmp(&b.len()).then_with(|| a.cmp(b))
+        })
+        .find(|ordering| ordering.is_ne())
+        .unwrap_or(Ordering::Equal)
 }
 
 /// Reads the content of a file to edit.
@@ -291,6 +324,40 @@ mod tests {
                     .to_string(),
                 format!("{url} is not a release of a plain version")
             );
+        }
+    }
+
+    #[test]
+    fn check_newer_versions() {
+        check_newer("Node.js", "24.22.0", "24.22.1").unwrap();
+        assert_eq!(
+            check_newer("Node.js", "24.22.0", "24.22.0")
+                .unwrap_err()
+                .to_string(),
+            "Node.js is already at version 24.22.0"
+        );
+        assert_eq!(
+            check_newer("Node.js", "25.1.0", "24.22.1")
+                .unwrap_err()
+                .to_string(),
+            "Node.js is already at version 25.1.0, newer than 24.22.1"
+        );
+    }
+
+    #[test]
+    fn compare_versions_order() {
+        let cases = [
+            ("24.22.1", "24.22.0", Ordering::Greater),
+            ("24.22.0", "24.22.1", Ordering::Less),
+            ("24.10.0", "24.9.0", Ordering::Greater),
+            ("100.0.0", "99.99.99", Ordering::Greater),
+            ("24.1", "24.0.9", Ordering::Greater),
+            ("24", "24.0.0", Ordering::Equal),
+            ("24.01.0", "24.1.0", Ordering::Equal),
+            ("24.22.1", "24.22.1", Ordering::Equal),
+        ];
+        for (a, b, ordering) in cases {
+            assert_eq!(compare_versions(a, b), ordering, "{a} vs {b}");
         }
     }
 

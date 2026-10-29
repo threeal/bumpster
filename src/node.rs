@@ -58,9 +58,7 @@ pub fn bump(target: &str) -> Result<String> {
 fn bump_package_json(package_json: &str, version: &str) -> Result<Edit> {
     let range = read_range(package_json)?;
     let (prefix, current) = tool::split_range(&range, "devEngines.runtime.version")?;
-    if current == version {
-        bail!("Node.js is already at version {version}");
-    }
+    tool::check_newer("Node.js", current, version)?;
 
     let to = format!("{prefix}{version}");
     let content = replace_once(package_json, &format!("\"{range}\""), &format!("\"{to}\""))?;
@@ -159,6 +157,16 @@ mod tests {
                 .unwrap_err()
                 .to_string(),
             "Node.js is already at version 24.22.0"
+        );
+    }
+
+    #[test]
+    fn bump_package_json_older_version() {
+        assert_eq!(
+            bump_package_json(&package_json("^25.1.0"), "24.22.1")
+                .unwrap_err()
+                .to_string(),
+            "Node.js is already at version 25.1.0, newer than 24.22.1"
         );
     }
 
