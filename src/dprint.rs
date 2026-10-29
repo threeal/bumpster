@@ -4,6 +4,7 @@
 use crate::git;
 use crate::tool::{self, Edit, replace_once};
 use anyhow::{Result, bail};
+use std::cmp::Ordering;
 
 /// A dprint plugin pinned by its URL in `dprint.json`.
 pub struct Plugin {
@@ -114,8 +115,12 @@ pub fn bump(plugin: &Plugin, target: &str) -> Result<String> {
 /// formatting are kept.
 fn bump_url(dprint_json: &str, version: &str, prefix: &str) -> Result<Edit> {
     let current = read_version(dprint_json, prefix)?;
-    if current == version {
-        bail!("{prefix}{version}.wasm is already in dprint.json");
+    match tool::compare_versions(version, current) {
+        Ordering::Greater => {}
+        Ordering::Equal => bail!("{prefix}{version}.wasm is already in dprint.json"),
+        Ordering::Less => {
+            bail!("{prefix}{current}.wasm in dprint.json is newer than {version}")
+        }
     }
 
     let content = replace_once(
@@ -190,6 +195,16 @@ mod tests {
                 .unwrap_err()
                 .to_string(),
             "https://plugins.dprint.dev/json-0.25.2.wasm is already in dprint.json"
+        );
+    }
+
+    #[test]
+    fn bump_url_older_version() {
+        assert_eq!(
+            bump_url(DPRINT_JSON, "0.25.1", "https://plugins.dprint.dev/json-")
+                .unwrap_err()
+                .to_string(),
+            "https://plugins.dprint.dev/json-0.25.2.wasm in dprint.json is newer than 0.25.1"
         );
     }
 

@@ -81,9 +81,7 @@ fn bump_package_json(package_json: &str, version: &str) -> Result<(Edit, Field)>
     if let Some(package_manager) = value.pointer("/devEngines/packageManager") {
         let range = read_dev_engines_range(package_manager)?;
         let (prefix, current) = tool::split_range(range, "devEngines.packageManager.version")?;
-        if current == version {
-            bail!("pnpm is already at version {version}");
-        }
+        tool::check_newer("pnpm", current, version)?;
 
         let to = format!("{prefix}{version}");
         let content = replace_once(package_json, &format!("\"{range}\""), &format!("\"{to}\""))?;
@@ -99,9 +97,7 @@ fn bump_package_json(package_json: &str, version: &str) -> Result<(Edit, Field)>
         bail!("neither devEngines.packageManager nor packageManager is set in package.json");
     };
     let current = read_package_manager_version(package_manager)?;
-    if current == version {
-        bail!("pnpm is already at version {version}");
-    }
+    tool::check_newer("pnpm", current, version)?;
 
     let from = format!("pnpm@{current}");
     let to = format!("pnpm@{version}");
@@ -141,6 +137,9 @@ fn read_package_manager_version(package_manager: &serde_json::Value) -> Result<&
     };
     if version.contains('+') {
         bail!("packageManager with a hash is not supported: {package_manager}");
+    }
+    if !tool::is_version(version) {
+        bail!("packageManager has no plain version: {package_manager}");
     }
 
     Ok(version)
@@ -195,6 +194,16 @@ mod tests {
     }
 
     #[test]
+    fn bump_dev_engines_older_version() {
+        assert_eq!(
+            bump_package_json(&dev_engines_package_json("^12.15.0"), "11.28.7")
+                .unwrap_err()
+                .to_string(),
+            "pnpm is already at version 12.15.0, newer than 11.28.7"
+        );
+    }
+
+    #[test]
     fn bump_dev_engines_complex_range() {
         for range in [">=11 <12", "^~11.28.7", "11.x"] {
             assert_eq!(
@@ -227,6 +236,17 @@ mod tests {
                 .unwrap_err()
                 .to_string(),
             "pnpm is already at version 11.28.7"
+        );
+    }
+
+    #[test]
+    fn bump_package_manager_older_version() {
+        let package_json = r#"{ "packageManager": "pnpm@12.15.0" }"#;
+        assert_eq!(
+            bump_package_json(package_json, "11.28.7")
+                .unwrap_err()
+                .to_string(),
+            "pnpm is already at version 12.15.0, newer than 11.28.7"
         );
     }
 
@@ -273,6 +293,10 @@ mod tests {
             (
                 r#"{ "packageManager": "pnpm@11.28.7+sha512.abc" }"#,
                 "packageManager with a hash is not supported: pnpm@11.28.7+sha512.abc",
+            ),
+            (
+                r#"{ "packageManager": "pnpm@11.0.0-rc.1" }"#,
+                "packageManager has no plain version: pnpm@11.0.0-rc.1",
             ),
         ];
         for (package_json, error) in cases {
