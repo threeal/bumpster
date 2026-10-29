@@ -15,8 +15,13 @@ enum Field {
     PackageManager,
 }
 
-/// Bumps pnpm in `package.json` to the given version, then commits the change
-/// to a new branch, pushes it, and opens a pull request for it.
+/// The tags that pnpm can be bumped to instead of a version, where the first is
+/// the default.
+pub const TAGS: [&str; 1] = ["latest"];
+
+/// Bumps pnpm in `package.json` to the given target, which is either a version
+/// or one of [`TAGS`], then commits the change to a new branch, pushes it, and
+/// opens a pull request for it.
 ///
 /// pnpm is bumped in the `devEngines.packageManager` field, with
 /// `pnpm-lock.yaml` updated to match, or in the `packageManager` field if the
@@ -27,10 +32,14 @@ enum Field {
 /// # Errors
 ///
 /// Returns an error if the repository is not ready for the bump, if the
-/// version is not released, or if any step of it fails.
+/// target is not a released version or a known tag, or if any step of it
+/// fails.
 #[cfg(not(tarpaulin_include))] // Runs commands, so it is not unit tested.
-pub fn bump(version: &str) -> Result<String> {
-    let (edit, field) = bump_package_json(&tool::read("package.json")?, version)?;
+pub fn bump(target: &str) -> Result<String> {
+    let version = tool::resolve_target("pnpm", "pnpm/pnpm", "v", target, &TAGS, |_| {
+        tool::latest_release("pnpm/pnpm", "v")
+    })?;
+    let (edit, field) = bump_package_json(&tool::read("package.json")?, &version)?;
     let (paths, field_name): (&[&str], _) = match field {
         Field::DevEngines => (
             &["package.json", "pnpm-lock.yaml"],
@@ -40,10 +49,8 @@ pub fn bump(version: &str) -> Result<String> {
     };
     println!("checking that the repository is ready");
     tool::check_ready(paths)?;
-    println!("checking that pnpm {version} is released");
-    tool::check_release("pnpm", "pnpm/pnpm", "v", version)?;
 
-    let branch = tool::branch_name("pnpm", version);
+    let branch = tool::branch_name("pnpm", &version);
     println!("creating branch {branch}");
     git::create_branch(&branch)?;
     println!(
@@ -56,12 +63,12 @@ pub fn bump(version: &str) -> Result<String> {
         command::run("pnpm", &["install", "--lockfile-only"])?;
     }
     println!("committing {}", paths.join(" and "));
-    git::commit(&tool::commit_message("pnpm", version), paths)?;
+    git::commit(&tool::commit_message("pnpm", &version), paths)?;
     println!("pushing {branch} to origin");
     git::push(&branch)?;
 
     println!("opening a pull request");
-    tool::open_pull_request("pnpm", "pnpm/pnpm", "v", version)
+    tool::open_pull_request("pnpm", "pnpm/pnpm", "v", &version)
 }
 
 /// Returns the edit of a `package.json` file with pnpm bumped to the given

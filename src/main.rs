@@ -2,7 +2,15 @@
 
 #[cfg(not(tarpaulin_include))]
 fn main() {
-    let version = || clap::arg!(<target> "The version to bump to").value_name("VERSION");
+    let target_arg = |tags: &'static [&'static str]| {
+        clap::Arg::new("target")
+            .value_name("VERSION")
+            .help(format!(
+                "The version to bump to, or a tag of it: {}",
+                tags.join(", ")
+            ))
+            .default_value(tags[0])
+    };
     let matches = clap::Command::new("bumpster")
         .version(env!("CARGO_PKG_VERSION"))
         .about("Bump the version of a tool in the current repository")
@@ -15,17 +23,17 @@ fn main() {
                         bumpster::dprint::PLUGINS.iter().map(|(plugin, _)| *plugin),
                     ),
                 ))
-                .arg(version()),
+                .arg(target_arg(&bumpster::dprint::TAGS)),
         )
         .subcommand(
             clap::Command::new("node")
                 .about("Bump Node.js in the devEngines.runtime field of package.json")
-                .arg(version()),
+                .arg(target_arg(&bumpster::node::TAGS)),
         )
         .subcommand(
             clap::Command::new("pnpm")
                 .about("Bump pnpm in the devEngines.packageManager or packageManager field of package.json")
-                .arg(version()),
+                .arg(target_arg(&bumpster::pnpm::TAGS)),
         )
         .get_matches();
 
@@ -54,7 +62,8 @@ fn main() {
     }
 }
 
-/// Returns the version to bump to, given as the target argument.
+/// Returns the target to bump to, given as a version or a tag of it, or the
+/// tool's default tag if not given.
 #[cfg(not(tarpaulin_include))]
 fn target(matches: &clap::ArgMatches) -> &str {
     matches
