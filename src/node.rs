@@ -9,47 +9,74 @@ use anyhow::{Context, Result, bail};
 /// first is the default.
 pub const TAGS: [&str; 2] = ["lts", "latest"];
 
-/// Bumps Node.js in the `devEngines.runtime` field of `package.json` to the
-/// given target, which is either a version or one of [`TAGS`], with
-/// `pnpm-lock.yaml` updated to match.
-///
-/// The change is then committed to a new branch, pushed, and opened as a pull
-/// request.
-///
-/// Returns the URL of the opened pull request.
+/// The files that a bump of Node.js edits.
+const PATHS: [&str; 2] = ["package.json", "pnpm-lock.yaml"];
+
+/// A bump of Node.js, prepared up to the edit of `package.json` that it makes.
+pub struct Bump {
+    /// The version that Node.js is bumped to.
+    #[cfg_attr(tarpaulin_include, allow(dead_code))] // Read only by `apply`.
+    version: String,
+    /// The edit of `package.json`.
+    edit: Edit,
+}
+
+/// Prepares a bump of Node.js in the `devEngines.runtime` field of
+/// `package.json` to the given target, which is either a version or one of
+/// [`TAGS`], without changing anything yet.
 ///
 /// # Errors
 ///
 /// Returns an error if the repository is not ready for the bump, if the
-/// target is not a released version or a known tag, or if any step of it
-/// fails.
-#[cfg(not(tarpaulin_include))] // Runs commands, so it is not unit tested.
-pub fn bump(target: &str) -> Result<String> {
-    let paths = ["package.json", "pnpm-lock.yaml"];
+/// target is not a released version or a known tag, or if Node.js can't be
+/// bumped to it.
+#[cfg(not(tarpaulin_include))] // Sends requests, so it is not unit tested.
+pub fn prepare(target: &str) -> Result<Bump> {
     println!("checking that the repository is ready");
-    tool::check_ready(&paths)?;
+    tool::check_ready(&PATHS)?;
     let version = tool::resolve_target("Node.js", "nodejs/node", "v", target, &TAGS, |tag| {
         tag_version(&fetch_index()?, tag)
     })?;
     let edit = bump_package_json(&tool::read("package.json")?, &version)?;
+    Ok(Bump { version, edit })
+}
 
-    let branch = tool::branch_name("node", &version);
-    println!("creating branch {branch}");
-    git::create_branch(&branch)?;
-    println!(
-        "updating devEngines.runtime.version in package.json: {} -> {}",
-        edit.from, edit.to
-    );
-    tool::write("package.json", &edit.content)?;
-    println!("updating pnpm-lock.yaml (pnpm install --lockfile-only)");
-    command::run("pnpm", &["install", "--lockfile-only"])?;
-    println!("committing {}", paths.join(" and "));
-    git::commit(&tool::commit_message("Node.js", &version), &paths)?;
-    println!("pushing {branch} to origin");
-    git::push(&branch)?;
+impl Bump {
+    /// Returns the change that the bump makes, naming the field and file it
+    /// edits along with the values it changes from and to.
+    #[must_use]
+    pub fn change(&self) -> String {
+        format!(
+            "devEngines.runtime.version in package.json: {} -> {}",
+            self.edit.from, self.edit.to
+        )
+    }
 
-    println!("opening a pull request");
-    tool::open_pull_request("Node.js", "nodejs/node", "v", &version)
+    /// Applies the bump, with `pnpm-lock.yaml` updated to match, then commits
+    /// the change to a new branch, pushes it, and opens a pull request for it.
+    ///
+    /// Returns the URL of the opened pull request.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if any step of it fails.
+    #[cfg(not(tarpaulin_include))] // Runs commands, so it is not unit tested.
+    pub fn apply(self) -> Result<String> {
+        let branch = tool::branch_name("node", &self.version);
+        println!("creating branch {branch}");
+        git::create_branch(&branch)?;
+        println!("updating {}", self.change());
+        tool::write("package.json", &self.edit.content)?;
+        println!("updating pnpm-lock.yaml (pnpm install --lockfile-only)");
+        command::run("pnpm", &["install", "--lockfile-only"])?;
+        println!("committing {}", PATHS.join(" and "));
+        git::commit(&tool::commit_message("Node.js", &self.version), &PATHS)?;
+        println!("pushing {branch} to origin");
+        git::push(&branch)?;
+
+        println!("opening a pull request");
+        tool::open_pull_request("Node.js", "nodejs/node", "v", &self.version)
+    }
 }
 
 /// Returns the edit of a `package.json` file with Node.js bumped to the given
@@ -148,6 +175,18 @@ mod tests {
             assert_eq!(edit.from, format!("{prefix}24.22.0"));
             assert_eq!(edit.to, format!("{prefix}24.22.1"));
         }
+    }
+
+    #[test]
+    fn bump_change() {
+        let bump = Bump {
+            version: "24.22.1".to_string(),
+            edit: bump_package_json(&package_json("^24.22.0"), "24.22.1").unwrap(),
+        };
+        assert_eq!(
+            bump.change(),
+            "devEngines.runtime.version in package.json: ^24.22.0 -> ^24.22.1"
+        );
     }
 
     #[test]

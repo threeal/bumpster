@@ -63,21 +63,29 @@ pub static PLUGINS: [(&str, Plugin); 4] = [
 /// the first is the default.
 pub const TAGS: [&str; 1] = ["latest"];
 
-/// Bumps a dprint plugin in the `plugins` field of `dprint.json` to the given
-/// target, which is either a version or one of [`TAGS`].
-///
-/// The change is then committed to a new branch, pushed, and opened as a pull
-/// request.
-///
-/// Returns the URL of the opened pull request.
+/// A bump of a dprint plugin, prepared up to the edit of `dprint.json` that it
+/// makes.
+pub struct Bump<'a> {
+    /// The plugin that is bumped.
+    plugin: &'a Plugin,
+    /// The version that the plugin is bumped to.
+    #[cfg_attr(tarpaulin_include, allow(dead_code))] // Read only by `apply`.
+    version: String,
+    /// The edit of `dprint.json`.
+    edit: Edit,
+}
+
+/// Prepares a bump of a dprint plugin in the `plugins` field of `dprint.json`
+/// to the given target, which is either a version or one of [`TAGS`], without
+/// changing anything yet.
 ///
 /// # Errors
 ///
 /// Returns an error if the repository is not ready for the bump, if the
-/// target is not a released version or a known tag, or if any step of it
-/// fails.
-#[cfg(not(tarpaulin_include))] // Runs commands, so it is not unit tested.
-pub fn bump(plugin: &Plugin, target: &str) -> Result<String> {
+/// target is not a released version or a known tag, or if the plugin can't be
+/// bumped to it.
+#[cfg(not(tarpaulin_include))] // Sends requests, so it is not unit tested.
+pub fn prepare<'a>(plugin: &'a Plugin, target: &str) -> Result<Bump<'a>> {
     println!("checking that the repository is ready");
     tool::check_ready(&["dprint.json"])?;
     let version = tool::resolve_target(
@@ -89,25 +97,56 @@ pub fn bump(plugin: &Plugin, target: &str) -> Result<String> {
         |_| tool::latest_release(plugin.repository, plugin.tag_prefix),
     )?;
     let edit = bump_url(&tool::read("dprint.json")?, &version, plugin.url_prefix)?;
+    Ok(Bump {
+        plugin,
+        version,
+        edit,
+    })
+}
 
-    let branch = tool::branch_name(plugin.name, &version);
-    println!("creating branch {branch}");
-    git::create_branch(&branch)?;
-    println!(
-        "updating {} in dprint.json: {} -> {}",
-        plugin.name, edit.from, edit.to
-    );
-    tool::write("dprint.json", &edit.content)?;
-    println!("committing dprint.json");
-    git::commit(
-        &tool::commit_message(plugin.name, &version),
-        &["dprint.json"],
-    )?;
-    println!("pushing {branch} to origin");
-    git::push(&branch)?;
+impl Bump<'_> {
+    /// Returns the change that the bump makes, naming the plugin and file it
+    /// edits along with the versions it changes from and to.
+    #[must_use]
+    pub fn change(&self) -> String {
+        format!(
+            "{} in dprint.json: {} -> {}",
+            self.plugin.name, self.edit.from, self.edit.to
+        )
+    }
 
-    println!("opening a pull request");
-    tool::open_pull_request(plugin.name, plugin.repository, plugin.tag_prefix, &version)
+    /// Applies the bump, then commits the change to a new branch, pushes it,
+    /// and opens a pull request for it.
+    ///
+    /// Returns the URL of the opened pull request.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if any step of it fails.
+    #[cfg(not(tarpaulin_include))] // Runs commands, so it is not unit tested.
+    pub fn apply(self) -> Result<String> {
+        let plugin = self.plugin;
+        let branch = tool::branch_name(plugin.name, &self.version);
+        println!("creating branch {branch}");
+        git::create_branch(&branch)?;
+        println!("updating {}", self.change());
+        tool::write("dprint.json", &self.edit.content)?;
+        println!("committing dprint.json");
+        git::commit(
+            &tool::commit_message(plugin.name, &self.version),
+            &["dprint.json"],
+        )?;
+        println!("pushing {branch} to origin");
+        git::push(&branch)?;
+
+        println!("opening a pull request");
+        tool::open_pull_request(
+            plugin.name,
+            plugin.repository,
+            plugin.tag_prefix,
+            &self.version,
+        )
+    }
 }
 
 /// Returns the edit of a `dprint.json` file with the plugin URL starting with
@@ -186,6 +225,20 @@ mod tests {
             assert_eq!(edit.from, current);
             assert_eq!(edit.to, version);
         }
+    }
+
+    #[test]
+    fn bump_change() {
+        let (_, plugin) = &PLUGINS[0];
+        let bump = Bump {
+            plugin,
+            version: "0.25.3".to_string(),
+            edit: bump_url(DPRINT_JSON, "0.25.3", plugin.url_prefix).unwrap(),
+        };
+        assert_eq!(
+            bump.change(),
+            "dprint-plugin-json in dprint.json: 0.25.2 -> 0.25.3"
+        );
     }
 
     #[test]
