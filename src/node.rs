@@ -84,7 +84,9 @@ impl Bump {
 /// the rest of the file as is.
 fn bump_package_json(package_json: &str, version: &str) -> Result<Edit> {
     let range = read_range(package_json)?;
-    let (prefix, current) = tool::split_range(&range, "devEngines.runtime.version")?;
+    let Some((prefix, current)) = tool::split_range(&range) else {
+        bail!("devEngines.runtime.version in package.json is not a simple range: {range}");
+    };
     tool::check_newer("Node.js", current, version)?;
 
     let to = format!("{prefix}{version}");
@@ -140,18 +142,18 @@ fn read_range(package_json: &str) -> Result<String> {
     let runtime = value
         .pointer("/devEngines/runtime")
         .context("devEngines.runtime is not set in package.json")?;
-    let Some(runtime) = runtime.as_object() else {
-        bail!("devEngines.runtime is not an object");
+    let Some(fields) = runtime.as_object() else {
+        bail!("devEngines.runtime in package.json is not an object: {runtime}");
     };
 
-    if runtime.get("name").and_then(serde_json::Value::as_str) != Some("node") {
-        bail!("devEngines.runtime is not node");
+    if fields.get("name").and_then(serde_json::Value::as_str) != Some("node") {
+        bail!("devEngines.runtime in package.json is not node: {runtime}");
     }
 
-    let range = runtime
+    let range = fields
         .get("version")
         .and_then(serde_json::Value::as_str)
-        .context("devEngines.runtime.version is not set")?;
+        .context("devEngines.runtime.version is not set in package.json")?;
 
     Ok(range.to_string())
 }
@@ -227,7 +229,9 @@ mod tests {
                 bump_package_json(&package_json(range), "24.22.1")
                     .unwrap_err()
                     .to_string(),
-                format!("devEngines.runtime.version is not a simple range: {range}")
+                format!(
+                    "devEngines.runtime.version in package.json is not a simple range: {range}"
+                )
             );
         }
     }
@@ -290,15 +294,15 @@ mod tests {
             ),
             (
                 r#"{ "devEngines": { "runtime": [] } }"#,
-                "devEngines.runtime is not an object",
+                "devEngines.runtime in package.json is not an object: []",
             ),
             (
                 r#"{ "devEngines": { "runtime": { "name": "bun" } } }"#,
-                "devEngines.runtime is not node",
+                r#"devEngines.runtime in package.json is not node: {"name":"bun"}"#,
             ),
             (
                 r#"{ "devEngines": { "runtime": { "name": "node" } } }"#,
-                "devEngines.runtime.version is not set",
+                "devEngines.runtime.version is not set in package.json",
             ),
         ];
         for (package_json, error) in cases {

@@ -4,7 +4,6 @@
 use crate::git;
 use crate::tool::{self, Edit, replace_once};
 use anyhow::{Result, bail};
-use std::cmp::Ordering;
 
 /// A dprint plugin pinned by its URL in `dprint.json`.
 pub struct Plugin {
@@ -96,7 +95,7 @@ pub fn prepare<'a>(plugin: &'a Plugin, target: &str) -> Result<Bump<'a>> {
         &TAGS,
         |_| tool::latest_release(plugin.repository, plugin.tag_prefix),
     )?;
-    let edit = bump_url(&tool::read("dprint.json")?, &version, plugin.url_prefix)?;
+    let edit = bump_url(&tool::read("dprint.json")?, &version, plugin)?;
     Ok(Bump {
         plugin,
         version,
@@ -149,18 +148,13 @@ impl Bump<'_> {
     }
 }
 
-/// Returns the edit of a `dprint.json` file with the plugin URL starting with
-/// `prefix` bumped to the given version, editing it as text so comments and
-/// formatting are kept.
-fn bump_url(dprint_json: &str, version: &str, prefix: &str) -> Result<Edit> {
+/// Returns the edit of a `dprint.json` file with the URL of the given plugin
+/// bumped to the given version, editing it as text so comments and formatting
+/// are kept.
+fn bump_url(dprint_json: &str, version: &str, plugin: &Plugin) -> Result<Edit> {
+    let prefix = plugin.url_prefix;
     let current = read_version(dprint_json, prefix)?;
-    match tool::compare_versions(version, current) {
-        Ordering::Greater => {}
-        Ordering::Equal => bail!("{prefix}{version}.wasm is already in dprint.json"),
-        Ordering::Less => {
-            bail!("{prefix}{current}.wasm in dprint.json is newer than {version}")
-        }
-    }
+    tool::check_newer(plugin.name, current, version)?;
 
     let content = replace_once(
         dprint_json,
@@ -185,12 +179,11 @@ fn read_version<'a>(dprint_json: &'a str, prefix: &str) -> Result<&'a str> {
         bail!("expected exactly one {prefix}<version>.wasm in dprint.json");
     }
 
-    let version = rest.split_once(".wasm").map_or("", |(version, _)| version);
-    if version.is_empty() || !version.chars().all(|c| c.is_ascii_digit() || c == '.') {
-        bail!("{prefix}<version>.wasm has no plain version in dprint.json");
+    let url = rest.split('"').next().unwrap_or_default();
+    match url.strip_suffix(".wasm") {
+        Some(version) if tool::is_version(version) => Ok(version),
+        _ => bail!("{prefix}<version>.wasm in dprint.json has no plain version: {prefix}{url}"),
     }
-
-    Ok(version)
 }
 
 #[cfg(test)]
@@ -220,7 +213,7 @@ mod tests {
             assert_eq!(*name, short_name);
             let current = from.rsplit_once('-').unwrap().1.trim_start_matches('v');
             let version = to.rsplit_once('-').unwrap().1.trim_start_matches('v');
-            let edit = bump_url(DPRINT_JSON, version, plugin.url_prefix).unwrap();
+            let edit = bump_url(DPRINT_JSON, version, plugin).unwrap();
             assert_eq!(edit.content, DPRINT_JSON.replace(from, to));
             assert_eq!(edit.from, current);
             assert_eq!(edit.to, version);
@@ -233,7 +226,7 @@ mod tests {
         let bump = Bump {
             plugin,
             version: "0.25.3".to_string(),
-            edit: bump_url(DPRINT_JSON, "0.25.3", plugin.url_prefix).unwrap(),
+            edit: bump_url(DPRINT_JSON, "0.25.3", plugin).unwrap(),
         };
         assert_eq!(
             bump.change(),
@@ -244,20 +237,20 @@ mod tests {
     #[test]
     fn bump_url_same_version() {
         assert_eq!(
-            bump_url(DPRINT_JSON, "0.25.2", "https://plugins.dprint.dev/json-")
+            bump_url(DPRINT_JSON, "0.25.2", &PLUGINS[0].1)
                 .unwrap_err()
                 .to_string(),
-            "https://plugins.dprint.dev/json-0.25.2.wasm is already in dprint.json"
+            "dprint-plugin-json is already at version 0.25.2"
         );
     }
 
     #[test]
     fn bump_url_older_version() {
         assert_eq!(
-            bump_url(DPRINT_JSON, "0.25.1", "https://plugins.dprint.dev/json-")
+            bump_url(DPRINT_JSON, "0.25.1", &PLUGINS[0].1)
                 .unwrap_err()
                 .to_string(),
-            "https://plugins.dprint.dev/json-0.25.2.wasm in dprint.json is newer than 0.25.1"
+            "dprint-plugin-json is already at version 0.25.2, newer than 0.25.1"
         );
     }
 
@@ -275,11 +268,11 @@ mod tests {
             ),
             (
                 r#"{ "plugins": ["https://plugins.dprint.dev/json-latest.wasm"] }"#,
-                "https://plugins.dprint.dev/json-<version>.wasm has no plain version in dprint.json",
+                "https://plugins.dprint.dev/json-<version>.wasm in dprint.json has no plain version: https://plugins.dprint.dev/json-latest.wasm",
             ),
             (
                 r#"{ "plugins": ["https://plugins.dprint.dev/json-0.25.2"] }"#,
-                "https://plugins.dprint.dev/json-<version>.wasm has no plain version in dprint.json",
+                "https://plugins.dprint.dev/json-<version>.wasm in dprint.json has no plain version: https://plugins.dprint.dev/json-0.25.2",
             ),
         ];
         for (dprint_json, error) in cases {
