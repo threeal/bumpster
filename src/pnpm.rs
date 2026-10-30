@@ -15,60 +15,107 @@ enum Field {
     PackageManager,
 }
 
+impl Field {
+    /// Returns the name of the field that holds the version.
+    const fn name(&self) -> &'static str {
+        match self {
+            Self::DevEngines => "devEngines.packageManager.version",
+            Self::PackageManager => "packageManager",
+        }
+    }
+
+    /// Returns the files that a bump of pnpm in the field edits.
+    const fn paths(&self) -> &'static [&'static str] {
+        match self {
+            Self::DevEngines => &["package.json", "pnpm-lock.yaml"],
+            Self::PackageManager => &["package.json"],
+        }
+    }
+}
+
 /// The tags that pnpm can be bumped to instead of a version, where the first is
 /// the default.
 pub const TAGS: [&str; 1] = ["latest"];
 
-/// Bumps pnpm in `package.json` to the given target, which is either a version
-/// or one of [`TAGS`], then commits the change to a new branch, pushes it, and
-/// opens a pull request for it.
+/// A bump of pnpm, prepared up to the edit of `package.json` that it makes.
+pub struct Bump {
+    /// The version that pnpm is bumped to.
+    #[cfg_attr(tarpaulin_include, allow(dead_code))] // Read only by `apply`.
+    version: String,
+    /// The edit of `package.json`.
+    edit: Edit,
+    /// The field of `package.json` that the edit bumps pnpm in.
+    field: Field,
+}
+
+/// Prepares a bump of pnpm in `package.json` to the given target, which is
+/// either a version or one of [`TAGS`], without changing anything yet.
 ///
-/// pnpm is bumped in the `devEngines.packageManager` field, with
-/// `pnpm-lock.yaml` updated to match, or in the `packageManager` field if the
-/// former is not set.
-///
-/// Returns the URL of the opened pull request.
+/// pnpm is bumped in the `devEngines.packageManager` field, or in the
+/// `packageManager` field if the former is not set.
 ///
 /// # Errors
 ///
 /// Returns an error if the repository is not ready for the bump, if the
-/// target is not a released version or a known tag, or if any step of it
-/// fails.
-#[cfg(not(tarpaulin_include))] // Runs commands, so it is not unit tested.
-pub fn bump(target: &str) -> Result<String> {
+/// target is not a released version or a known tag, or if pnpm can't be
+/// bumped to it.
+#[cfg(not(tarpaulin_include))] // Sends requests, so it is not unit tested.
+pub fn prepare(target: &str) -> Result<Bump> {
     let version = tool::resolve_target("pnpm", "pnpm/pnpm", "v", target, &TAGS, |_| {
         tool::latest_release("pnpm/pnpm", "v")
     })?;
     let (edit, field) = bump_package_json(&tool::read("package.json")?, &version)?;
-    let (paths, field_name): (&[&str], _) = match field {
-        Field::DevEngines => (
-            &["package.json", "pnpm-lock.yaml"],
-            "devEngines.packageManager.version",
-        ),
-        Field::PackageManager => (&["package.json"], "packageManager"),
-    };
     println!("checking that the repository is ready");
-    tool::check_ready(paths)?;
+    tool::check_ready(field.paths())?;
+    Ok(Bump {
+        version,
+        edit,
+        field,
+    })
+}
 
-    let branch = tool::branch_name("pnpm", &version);
-    println!("creating branch {branch}");
-    git::create_branch(&branch)?;
-    println!(
-        "updating {field_name} in package.json: {} -> {}",
-        edit.from, edit.to
-    );
-    tool::write("package.json", &edit.content)?;
-    if field == Field::DevEngines {
-        println!("updating pnpm-lock.yaml (pnpm install --lockfile-only)");
-        command::run("pnpm", &["install", "--lockfile-only"])?;
+impl Bump {
+    /// Returns the change that the bump makes, naming the field and file it
+    /// edits along with the values it changes from and to.
+    #[must_use]
+    pub fn change(&self) -> String {
+        format!(
+            "{} in package.json: {} -> {}",
+            self.field.name(),
+            self.edit.from,
+            self.edit.to
+        )
     }
-    println!("committing {}", paths.join(" and "));
-    git::commit(&tool::commit_message("pnpm", &version), paths)?;
-    println!("pushing {branch} to origin");
-    git::push(&branch)?;
 
-    println!("opening a pull request");
-    tool::open_pull_request("pnpm", "pnpm/pnpm", "v", &version)
+    /// Applies the bump, with `pnpm-lock.yaml` updated to match if pnpm is
+    /// bumped in the `devEngines.packageManager` field, then commits the
+    /// change to a new branch, pushes it, and opens a pull request for it.
+    ///
+    /// Returns the URL of the opened pull request.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if any step of it fails.
+    #[cfg(not(tarpaulin_include))] // Runs commands, so it is not unit tested.
+    pub fn apply(self) -> Result<String> {
+        let paths = self.field.paths();
+        let branch = tool::branch_name("pnpm", &self.version);
+        println!("creating branch {branch}");
+        git::create_branch(&branch)?;
+        println!("updating {}", self.change());
+        tool::write("package.json", &self.edit.content)?;
+        if self.field == Field::DevEngines {
+            println!("updating pnpm-lock.yaml (pnpm install --lockfile-only)");
+            command::run("pnpm", &["install", "--lockfile-only"])?;
+        }
+        println!("committing {}", paths.join(" and "));
+        git::commit(&tool::commit_message("pnpm", &self.version), paths)?;
+        println!("pushing {branch} to origin");
+        git::push(&branch)?;
+
+        println!("opening a pull request");
+        tool::open_pull_request("pnpm", "pnpm/pnpm", "v", &self.version)
+    }
 }
 
 /// Returns the edit of a `package.json` file with pnpm bumped to the given
@@ -181,6 +228,38 @@ mod tests {
         assert_eq!(edit.from, "^11.28.7");
         assert_eq!(edit.to, "^12.15.0");
         assert_eq!(field, Field::DevEngines);
+    }
+
+    #[test]
+    fn bump_change() {
+        let package_jsons = [
+            (
+                dev_engines_package_json("^11.28.7"),
+                "devEngines.packageManager.version in package.json: ^11.28.7 -> ^12.15.0",
+            ),
+            (
+                r#"{ "packageManager": "pnpm@11.28.7" }"#.to_string(),
+                "packageManager in package.json: pnpm@11.28.7 -> pnpm@12.15.0",
+            ),
+        ];
+        for (package_json, change) in package_jsons {
+            let (edit, field) = bump_package_json(&package_json, "12.15.0").unwrap();
+            let bump = Bump {
+                version: "12.15.0".to_string(),
+                edit,
+                field,
+            };
+            assert_eq!(bump.change(), change);
+        }
+    }
+
+    #[test]
+    fn field_paths() {
+        assert_eq!(
+            Field::DevEngines.paths(),
+            ["package.json", "pnpm-lock.yaml"]
+        );
+        assert_eq!(Field::PackageManager.paths(), ["package.json"]);
     }
 
     #[test]
