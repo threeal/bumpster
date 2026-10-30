@@ -232,20 +232,13 @@ pub fn replace_once(content: &str, from: &str, to: &str) -> Result<String> {
     Ok(content.replacen(from, to, 1))
 }
 
-/// Splits a version range into its prefix (`^`, `~`, or none) and version,
-/// refusing anything more complex, naming `field` in the error.
-pub fn split_range<'a>(range: &'a str, field: &str) -> Result<(&'a str, &'a str)> {
+/// Splits a version range into its prefix (`^`, `~`, or none) and plain
+/// version, or returns `None` if the range is anything more complex.
+#[must_use]
+pub fn split_range(range: &str) -> Option<(&str, &str)> {
     let version = range.trim_start_matches(['^', '~']);
     let prefix = &range[..range.len() - version.len()];
-
-    if prefix.len() > 1
-        || version.is_empty()
-        || !version.chars().all(|c| c.is_ascii_digit() || c == '.')
-    {
-        bail!("{field} is not a simple range: {range}");
-    }
-
-    Ok((prefix, version))
+    (prefix.len() <= 1 && is_version(version)).then_some((prefix, version))
 }
 
 #[cfg(test)]

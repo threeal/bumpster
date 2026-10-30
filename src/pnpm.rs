@@ -127,7 +127,11 @@ fn bump_package_json(package_json: &str, version: &str) -> Result<(Edit, Field)>
 
     if let Some(package_manager) = value.pointer("/devEngines/packageManager") {
         let range = read_dev_engines_range(package_manager)?;
-        let (prefix, current) = tool::split_range(range, "devEngines.packageManager.version")?;
+        let Some((prefix, current)) = tool::split_range(range) else {
+            bail!(
+                "devEngines.packageManager.version in package.json is not a simple range: {range}"
+            );
+        };
         tool::check_newer("pnpm", current, version)?;
 
         let to = format!("{prefix}{version}");
@@ -155,38 +159,34 @@ fn bump_package_json(package_json: &str, version: &str) -> Result<(Edit, Field)>
 /// Reads the pnpm version range from the value of the
 /// `devEngines.packageManager` field.
 fn read_dev_engines_range(package_manager: &serde_json::Value) -> Result<&str> {
-    let Some(package_manager) = package_manager.as_object() else {
-        bail!("devEngines.packageManager is not an object");
+    let Some(fields) = package_manager.as_object() else {
+        bail!("devEngines.packageManager in package.json is not an object: {package_manager}");
     };
 
-    if package_manager
-        .get("name")
-        .and_then(serde_json::Value::as_str)
-        != Some("pnpm")
-    {
-        bail!("devEngines.packageManager is not pnpm");
+    if fields.get("name").and_then(serde_json::Value::as_str) != Some("pnpm") {
+        bail!("devEngines.packageManager in package.json is not pnpm: {package_manager}");
     }
 
-    package_manager
+    fields
         .get("version")
         .and_then(serde_json::Value::as_str)
-        .context("devEngines.packageManager.version is not set")
+        .context("devEngines.packageManager.version is not set in package.json")
 }
 
 /// Reads the pnpm version from the value of the `packageManager` field.
 fn read_package_manager_version(package_manager: &serde_json::Value) -> Result<&str> {
-    let Some(package_manager) = package_manager.as_str() else {
-        bail!("packageManager is not a string");
+    let Some(value) = package_manager.as_str() else {
+        bail!("packageManager in package.json is not a string: {package_manager}");
     };
 
-    let Some(version) = package_manager.strip_prefix("pnpm@") else {
-        bail!("packageManager is not pnpm: {package_manager}");
+    let Some(version) = value.strip_prefix("pnpm@") else {
+        bail!("packageManager in package.json is not pnpm: {value}");
     };
     if version.contains('+') {
-        bail!("packageManager with a hash is not supported: {package_manager}");
+        bail!("packageManager in package.json has a hash, which is not supported: {value}");
     }
     if !tool::is_version(version) {
-        bail!("packageManager has no plain version: {package_manager}");
+        bail!("packageManager in package.json has no plain version: {value}");
     }
 
     Ok(version)
@@ -289,7 +289,9 @@ mod tests {
                 bump_package_json(&dev_engines_package_json(range), "12.15.0")
                     .unwrap_err()
                     .to_string(),
-                format!("devEngines.packageManager.version is not a simple range: {range}")
+                format!(
+                    "devEngines.packageManager.version in package.json is not a simple range: {range}"
+                )
             );
         }
     }
@@ -351,31 +353,31 @@ mod tests {
             ),
             (
                 r#"{ "devEngines": { "packageManager": [] } }"#,
-                "devEngines.packageManager is not an object",
+                "devEngines.packageManager in package.json is not an object: []",
             ),
             (
                 r#"{ "devEngines": { "packageManager": { "name": "yarn" } } }"#,
-                "devEngines.packageManager is not pnpm",
+                r#"devEngines.packageManager in package.json is not pnpm: {"name":"yarn"}"#,
             ),
             (
                 r#"{ "devEngines": { "packageManager": { "name": "pnpm" } } }"#,
-                "devEngines.packageManager.version is not set",
+                "devEngines.packageManager.version is not set in package.json",
             ),
             (
                 r#"{ "packageManager": 1 }"#,
-                "packageManager is not a string",
+                "packageManager in package.json is not a string: 1",
             ),
             (
                 r#"{ "packageManager": "yarn@4.0.0" }"#,
-                "packageManager is not pnpm: yarn@4.0.0",
+                "packageManager in package.json is not pnpm: yarn@4.0.0",
             ),
             (
                 r#"{ "packageManager": "pnpm@11.28.7+sha512.abc" }"#,
-                "packageManager with a hash is not supported: pnpm@11.28.7+sha512.abc",
+                "packageManager in package.json has a hash, which is not supported: pnpm@11.28.7+sha512.abc",
             ),
             (
                 r#"{ "packageManager": "pnpm@11.0.0-rc.1" }"#,
-                "packageManager has no plain version: pnpm@11.0.0-rc.1",
+                "packageManager in package.json has no plain version: pnpm@11.0.0-rc.1",
             ),
         ];
         for (package_json, error) in cases {
