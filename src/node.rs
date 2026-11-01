@@ -5,8 +5,7 @@ use crate::tool::{self, Edit, replace_once};
 use crate::{command, git};
 use anyhow::{Context, Result, bail};
 
-/// The tags that Node.js can be bumped to instead of a version, where the
-/// first is the default.
+/// The tags that Node.js can be bumped to instead of a version.
 pub const TAGS: [&str; 2] = ["lts", "latest"];
 
 /// The files that a bump of Node.js edits.
@@ -25,15 +24,18 @@ pub struct Bump {
 /// `package.json` to the given target, which is either a version or one of
 /// [`TAGS`], without changing anything yet.
 ///
+/// If no target is given, Node.js is bumped to the `lts` tag.
+///
 /// # Errors
 ///
 /// Returns an error if the repository is not ready for the bump, if the
 /// target is not a released version or a known tag, or if Node.js can't be
 /// bumped to it.
 #[cfg(not(tarpaulin_include))] // Sends requests, so it is not unit tested.
-pub fn prepare(target: &str) -> Result<Bump> {
+pub fn prepare(target: Option<&str>) -> Result<Bump> {
     println!("checking that the repository is ready");
     tool::check_ready(&PATHS)?;
+    let target = target.unwrap_or("lts");
     let version = tool::resolve_target("Node.js", "nodejs/node", "v", target, &TAGS, |tag| {
         tag_version(&fetch_index()?, tag)
     })?;

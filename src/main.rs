@@ -2,14 +2,11 @@
 
 #[cfg(not(tarpaulin_include))]
 fn main() {
-    let target_arg = |tags: &'static [&'static str]| {
-        clap::Arg::new("target")
-            .value_name("VERSION")
-            .help(format!(
-                "The version to bump to, or a tag of it: {}",
-                tags.join(", ")
-            ))
-            .default_value(tags[0])
+    let target_arg = |tags: &'static [&'static str], default: &str| {
+        clap::Arg::new("target").value_name("VERSION").help(format!(
+            "The version to bump to, or a tag of it: {}. If not given, bumps to {default}",
+            tags.join(", ")
+        ))
     };
     let dry_run_arg = || clap::arg!(--"dry-run" "Check the bump and show what it would change, without making it");
     let matches = clap::Command::new("bumpster")
@@ -24,19 +21,22 @@ fn main() {
                         bumpster::dprint::PLUGINS.iter().map(|(plugin, _)| *plugin),
                     ),
                 ))
-                .arg(target_arg(&bumpster::dprint::TAGS))
+                .arg(target_arg(
+                    &bumpster::dprint::TAGS,
+                    "the plugin's latest release (latest)",
+                ))
                 .arg(dry_run_arg()),
         )
         .subcommand(
             clap::Command::new("node")
                 .about("Bump Node.js in the devEngines.runtime field of package.json")
-                .arg(target_arg(&bumpster::node::TAGS))
+                .arg(target_arg(&bumpster::node::TAGS, "the newest LTS release (lts)"))
                 .arg(dry_run_arg()),
         )
         .subcommand(
             clap::Command::new("pnpm")
                 .about("Bump pnpm in the devEngines.packageManager or packageManager field of package.json")
-                .arg(target_arg(&bumpster::pnpm::TAGS))
+                .arg(target_arg(&bumpster::pnpm::TAGS, "pnpm's latest release (latest)"))
                 .arg(dry_run_arg()),
         )
         .get_matches();
@@ -66,13 +66,11 @@ fn main() {
     }
 }
 
-/// Returns the target to bump to, given as a version or a tag of it, or the
-/// tool's default tag if not given.
+/// Returns the target to bump to, given as a version or a tag of it, or `None`
+/// if not given, leaving the tool to decide what to bump to.
 #[cfg(not(tarpaulin_include))]
-fn target(matches: &clap::ArgMatches) -> &str {
-    matches
-        .get_one::<String>("target")
-        .map_or("", String::as_str)
+fn target(matches: &clap::ArgMatches) -> Option<&str> {
+    matches.get_one::<String>("target").map(String::as_str)
 }
 
 /// Returns whether the bump is only checked, given as the dry run flag.
