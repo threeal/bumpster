@@ -25,7 +25,7 @@ pub fn create_branch(name: &str) -> Result<()> {
 
 /// Commits the given files with a sign-off and signature, skipping git hooks.
 pub fn commit(message: &str, paths: &[&str]) -> Result<()> {
-    let mut args = vec!["commit", "-sSn", "-m", message, "--"];
+    let mut args = vec!["commit", "-nsS", "-m", message, "--"];
     args.extend_from_slice(paths);
     run("git", &args).map(|_| ())
 }
