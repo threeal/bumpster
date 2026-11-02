@@ -46,8 +46,7 @@ impl Field {
     }
 }
 
-/// The tags that pnpm can be bumped to instead of a version, where the first is
-/// the default.
+/// The tags that pnpm can be bumped to instead of a version.
 pub const TAGS: [&str; 1] = ["latest"];
 
 /// A bump of pnpm, prepared up to the edit of `package.json` that it makes.
@@ -64,6 +63,8 @@ pub struct Bump {
 /// Prepares a bump of pnpm in `package.json` to the given target, which is
 /// either a version or one of [`TAGS`], without changing anything yet.
 ///
+/// If no target is given, pnpm is bumped to the `latest` tag.
+///
 /// pnpm is bumped in the `devEngines.packageManager` field, or in the
 /// `packageManager` field if the former is not set.
 ///
@@ -73,12 +74,13 @@ pub struct Bump {
 /// target is not a released version or a known tag, or if pnpm can't be
 /// bumped to it.
 #[cfg(not(tarpaulin_include))] // Sends requests, so it is not unit tested.
-pub fn prepare(target: &str) -> Result<Bump> {
+pub fn prepare(target: Option<&str>) -> Result<Bump> {
     println!("checking that the repository is ready");
     let package_json = tool::read("package.json")?;
     let value = parse_package_json(&package_json)?;
     let field = Field::find(&value)?;
     tool::check_ready(field.paths())?;
+    let target = target.unwrap_or("latest");
     let version = tool::resolve_target("pnpm", "pnpm/pnpm", "v", target, &TAGS, |_| {
         tool::latest_release("pnpm/pnpm", "v")
     })?;

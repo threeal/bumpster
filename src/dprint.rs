@@ -58,8 +58,7 @@ pub static PLUGINS: [(&str, Plugin); 4] = [
     ),
 ];
 
-/// The tags that a dprint plugin can be bumped to instead of a version, where
-/// the first is the default.
+/// The tags that a dprint plugin can be bumped to instead of a version.
 pub const TAGS: [&str; 1] = ["latest"];
 
 /// A bump of a dprint plugin, prepared up to the edit of `dprint.json` that it
@@ -78,15 +77,18 @@ pub struct Bump<'a> {
 /// to the given target, which is either a version or one of [`TAGS`], without
 /// changing anything yet.
 ///
+/// If no target is given, the plugin is bumped to the `latest` tag.
+///
 /// # Errors
 ///
 /// Returns an error if the repository is not ready for the bump, if the
 /// target is not a released version or a known tag, or if the plugin can't be
 /// bumped to it.
 #[cfg(not(tarpaulin_include))] // Sends requests, so it is not unit tested.
-pub fn prepare<'a>(plugin: &'a Plugin, target: &str) -> Result<Bump<'a>> {
+pub fn prepare<'a>(plugin: &'a Plugin, target: Option<&str>) -> Result<Bump<'a>> {
     println!("checking that the repository is ready");
     tool::check_ready(&["dprint.json"])?;
+    let target = target.unwrap_or("latest");
     let version = tool::resolve_target(
         plugin.name,
         plugin.repository,
