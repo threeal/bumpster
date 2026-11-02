@@ -114,6 +114,9 @@ fn fetch_index() -> Result<String> {
 /// Returns the version of Node.js that a tag refers to in the index of Node.js
 /// releases: the newest release for `latest`, or the newest LTS release for
 /// `lts`.
+///
+/// Releases without a plain version, such as prereleases, are skipped, since
+/// they are never something to bump to.
 fn tag_version(index: &str, tag: &str) -> Result<String> {
     let index: serde_json::Value =
         serde_json::from_str(index).context("failed to parse the index of Node.js releases")?;
@@ -121,18 +124,15 @@ fn tag_version(index: &str, tag: &str) -> Result<String> {
         bail!("the index of Node.js releases is not an array");
     };
 
-    let release = releases
+    releases
         .iter()
-        .find(|release| tag == "latest" || release.get("lts").is_some_and(|lts| lts != false))
-        .with_context(|| format!("no {tag} release is found in the index of Node.js releases"))?;
-    let version = release
-        .get("version")
-        .and_then(serde_json::Value::as_str)
-        .and_then(|version| version.strip_prefix('v'))
-        .filter(|version| tool::is_version(version))
-        .context("a release has no plain version in the index of Node.js releases")?;
-
-    Ok(version.to_string())
+        .filter(|release| tag == "latest" || release.get("lts").is_some_and(|lts| lts != false))
+        .find_map(|release| {
+            let version = release.get("version")?.as_str()?.strip_prefix('v')?;
+            tool::is_version(version).then_some(version)
+        })
+        .map(str::to_string)
+        .with_context(|| format!("no {tag} release is found in the index of Node.js releases"))
 }
 
 /// Reads the Node.js version range from the `devEngines.runtime` field of a
@@ -239,6 +239,7 @@ mod tests {
     }
 
     const INDEX: &str = r#"[
+  { "version": "v27.0.0-alpha.0.0.0", "lts": false },
   { "version": "v26.1.0", "lts": false },
   { "version": "v24.22.1", "lts": "Krypton" },
   { "version": "v22.30.0", "lts": "Jod" }
@@ -268,17 +269,17 @@ mod tests {
             (
                 r#"[{ "lts": "Krypton" }]"#,
                 "lts",
-                "a release has no plain version in the index of Node.js releases",
+                "no lts release is found in the index of Node.js releases",
             ),
             (
                 r#"[{ "version": "26.1.0" }]"#,
                 "latest",
-                "a release has no plain version in the index of Node.js releases",
+                "no latest release is found in the index of Node.js releases",
             ),
             (
                 r#"[{ "version": "v26.0.0-rc.1" }]"#,
                 "latest",
-                "a release has no plain version in the index of Node.js releases",
+                "no latest release is found in the index of Node.js releases",
             ),
         ];
         for (index, tag, error) in cases {
