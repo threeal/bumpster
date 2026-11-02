@@ -32,7 +32,10 @@ fn main() {
         .subcommand(
             clap::Command::new("node")
                 .about("Bump Node.js in the devEngines.runtime field of package.json")
-                .arg(target_arg(&bumpster::node::TAGS, "the newest LTS release (lts)"))
+                .arg(target_arg(
+                    &bumpster::node::TAGS,
+                    "the newest release of its current major version",
+                ))
                 .arg(yes_arg()),
         )
         .subcommand(
