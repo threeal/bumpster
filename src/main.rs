@@ -1,5 +1,7 @@
 //! A command-line interface for bumping the version of a tool in a repository.
 
+use std::io::IsTerminal;
+
 #[cfg(not(tarpaulin_include))]
 fn main() {
     let target_arg = |tags: &'static [&'static str], default: &str| {
@@ -8,7 +10,7 @@ fn main() {
             tags.join(", ")
         ))
     };
-    let dry_run_arg = || clap::arg!(--"dry-run" "Check the bump and show what it would change, without making it");
+    let yes_arg = || clap::arg!(-y --yes "Open the pull request without asking to confirm it");
     let matches = clap::Command::new("bumpster")
         .version(env!("CARGO_PKG_VERSION"))
         .about("Bump the version of a tool in the current repository")
@@ -25,19 +27,19 @@ fn main() {
                     &bumpster::dprint::TAGS,
                     "the plugin's latest release (latest)",
                 ))
-                .arg(dry_run_arg()),
+                .arg(yes_arg()),
         )
         .subcommand(
             clap::Command::new("node")
                 .about("Bump Node.js in the devEngines.runtime field of package.json")
                 .arg(target_arg(&bumpster::node::TAGS, "the newest LTS release (lts)"))
-                .arg(dry_run_arg()),
+                .arg(yes_arg()),
         )
         .subcommand(
             clap::Command::new("pnpm")
                 .about("Bump pnpm in the devEngines.packageManager or packageManager field of package.json")
                 .arg(target_arg(&bumpster::pnpm::TAGS, "pnpm's latest release (latest)"))
-                .arg(dry_run_arg()),
+                .arg(yes_arg()),
         )
         .get_matches();
 
@@ -51,12 +53,12 @@ fn main() {
                 .find(|(name, _)| *name == plugin)
                 .expect("the plugin is validated by clap");
             bumpster::dprint::prepare(plugin, target(matches))
-                .and_then(|bump| finish(&bump.change(), dry_run(matches), || bump.apply()))
+                .and_then(|bump| finish(&bump.change(), yes(matches), || bump.apply()))
         }
         Some(("node", matches)) => bumpster::node::prepare(target(matches))
-            .and_then(|bump| finish(&bump.change(), dry_run(matches), || bump.apply())),
+            .and_then(|bump| finish(&bump.change(), yes(matches), || bump.apply())),
         Some(("pnpm", matches)) => bumpster::pnpm::prepare(target(matches))
-            .and_then(|bump| finish(&bump.change(), dry_run(matches), || bump.apply())),
+            .and_then(|bump| finish(&bump.change(), yes(matches), || bump.apply())),
         _ => unreachable!("a subcommand is required"),
     };
 
@@ -73,24 +75,33 @@ fn target(matches: &clap::ArgMatches) -> Option<&str> {
     matches.get_one::<String>("target").map(String::as_str)
 }
 
-/// Returns whether the bump is only checked, given as the dry run flag.
+/// Returns whether the bump is made without asking to confirm it, given as
+/// the yes flag.
 #[cfg(not(tarpaulin_include))]
-fn dry_run(matches: &clap::ArgMatches) -> bool {
-    matches.get_flag("dry-run")
+fn yes(matches: &clap::ArgMatches) -> bool {
+    matches.get_flag("yes")
 }
 
-/// Finishes a prepared bump that makes the given change, by only showing the
-/// change in a dry run, or by applying it and showing the URL of its opened
-/// pull request.
+/// Finishes a prepared bump that makes the given change, by showing the
+/// change and, unless confirmation is skipped, asking whether to go ahead,
+/// then applying it and showing the URL of its opened pull request.
 #[cfg(not(tarpaulin_include))]
 fn finish(
     change: &str,
-    dry_run: bool,
+    yes: bool,
     apply: impl FnOnce() -> anyhow::Result<String>,
 ) -> anyhow::Result<()> {
-    if dry_run {
-        println!("would update {change}");
-        return Ok(());
+    println!("will update {change}");
+    if !yes {
+        if !std::io::stdin().is_terminal() {
+            anyhow::bail!(
+                "no terminal to confirm the bump on, pass --yes to make it without confirming"
+            );
+        }
+        if !bumpster::prompt::confirm("open a pull request")? {
+            println!("aborted");
+            return Ok(());
+        }
     }
     println!("opened {}", apply()?);
     Ok(())
