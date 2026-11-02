@@ -27,7 +27,8 @@ pub struct Bump {
 /// A version with only a major, or a major and minor, such as `24` or `24.22`,
 /// is resolved to the newest release matching it.
 ///
-/// If no target is given, Node.js is bumped to the `lts` tag.
+/// If no target is given, Node.js is bumped to the newest release of the major
+/// version it's already on in `package.json`.
 ///
 /// # Errors
 ///
@@ -38,19 +39,30 @@ pub struct Bump {
 pub fn prepare(target: Option<&str>) -> Result<Bump> {
     println!("checking that the repository is ready");
     tool::check_ready(&PATHS)?;
-    let target = target.unwrap_or("lts");
-    let version = if is_partial_version(target) {
+    let package_json = tool::read("package.json")?;
+    let version = match target {
+        Some(target) => resolve_version(target)?,
+        None => resolve_version(&current_major(&package_json)?)?,
+    };
+    let edit = bump_package_json(&package_json, &version)?;
+    Ok(Bump { version, edit })
+}
+
+/// Resolves the target of a bump to the version to bump Node.js to, where the
+/// target is a version, a version with only a major or a major and minor, or
+/// one of [`TAGS`].
+#[cfg(not(tarpaulin_include))] // Sends requests, so it is not unit tested.
+fn resolve_version(target: &str) -> Result<String> {
+    if is_partial_version(target) {
         println!("finding the newest {target}.x version of Node.js");
         let version = newest_version(&fetch_index()?, target)?;
         println!("found Node.js {version}");
-        version
-    } else {
-        tool::resolve_target("Node.js", "nodejs/node", "v", target, &TAGS, |tag| {
-            tag_version(&fetch_index()?, tag)
-        })?
-    };
-    let edit = bump_package_json(&tool::read("package.json")?, &version)?;
-    Ok(Bump { version, edit })
+        return Ok(version);
+    }
+
+    tool::resolve_target("Node.js", "nodejs/node", "v", target, &TAGS, |tag| {
+        tag_version(&fetch_index()?, tag)
+    })
 }
 
 impl Bump {
@@ -96,9 +108,7 @@ impl Bump {
 /// the rest of the file as is.
 fn bump_package_json(package_json: &str, version: &str) -> Result<Edit> {
     let range = read_range(package_json)?;
-    let Some((prefix, current)) = tool::split_range(&range) else {
-        bail!("devEngines.runtime.version in package.json is not a simple range: {range}");
-    };
+    let (prefix, current) = split_simple_range(&range)?;
     tool::check_newer("Node.js", current, version)?;
 
     let to = format!("{prefix}{version}");
@@ -107,6 +117,22 @@ fn bump_package_json(package_json: &str, version: &str) -> Result<Edit> {
         content,
         from: range,
         to,
+    })
+}
+
+/// Returns the major version of Node.js in the `devEngines.runtime` field of a
+/// `package.json` file, such as `24` for `^24.22.0`.
+fn current_major(package_json: &str) -> Result<String> {
+    let range = read_range(package_json)?;
+    let (_, current) = split_simple_range(&range)?;
+    Ok(current.split('.').next().unwrap_or_default().to_string())
+}
+
+/// Splits the Node.js version range from `package.json` into its prefix and
+/// plain version, as [`tool::split_range`] does.
+fn split_simple_range(range: &str) -> Result<(&str, &str)> {
+    tool::split_range(range).with_context(|| {
+        format!("devEngines.runtime.version in package.json is not a simple range: {range}")
     })
 }
 
@@ -276,6 +302,28 @@ mod tests {
                 )
             );
         }
+    }
+
+    #[test]
+    fn current_major_valid() {
+        let cases = [("^24.22.0", "24"), ("~22.1", "22"), ("26", "26")];
+        for (range, major) in cases {
+            assert_eq!(current_major(&package_json(range)).unwrap(), major);
+        }
+    }
+
+    #[test]
+    fn current_major_invalid() {
+        assert_eq!(
+            current_major("{").unwrap_err().to_string(),
+            "failed to parse package.json"
+        );
+        assert_eq!(
+            current_major(&package_json(">=24"))
+                .unwrap_err()
+                .to_string(),
+            "devEngines.runtime.version in package.json is not a simple range: >=24"
+        );
     }
 
     const INDEX: &str = r#"[
