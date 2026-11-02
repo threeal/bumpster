@@ -20,7 +20,7 @@ Run Bumpster on the `main` branch of a repository with a clean working tree, wit
 bumpster <tool> [version]
 ```
 
-The version can also be a tag that resolves to a released version, such as `latest`, with each tool defaulting to one of its tags when no version is given. It updates the version, commits the change to a new branch, pushes it, and opens a pull request for it, logging each step as it runs and ending with the pull request's URL. To check whether a tool can be bumped without making the bump, pass `--dry-run`, which runs the same checks and shows the change instead, failing if the tool is already at that version or newer. The supported tools are:
+The version can also be a tag that resolves to a released version, such as `latest`, with each tool defaulting to one of its tags when no version is given. It checks that the tool can be bumped, failing if it's already at that version or newer, then shows the change and asks whether to open a pull request for it, with yes as the default answer. Once confirmed, it updates the version, commits the change to a new branch, pushes it, and opens the pull request, logging each step as it runs and ending with the pull request's URL. To skip the confirmation, such as when running without a terminal, pass `--yes`. The supported tools are:
 
 - **`dprint <plugin>`** — a dprint plugin in the `plugins` field of `dprint.json`, where `<plugin>` is one of `json`, `markdown`, `toml`, or `yaml` (for `g-plane/pretty_yaml`). It defaults to the `latest` tag, the plugin's latest GitHub release.
 - **`node`** — Node.js, in the `devEngines.runtime` field of `package.json`, with `pnpm-lock.yaml` updated to match. It defaults to the `lts` tag, the newest LTS release, and also supports `latest`, the newest release.

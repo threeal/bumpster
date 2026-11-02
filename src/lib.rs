@@ -6,4 +6,5 @@ mod gh;
 mod git;
 pub mod node;
 pub mod pnpm;
+pub mod prompt;
 mod tool;
