@@ -24,6 +24,9 @@ pub struct Bump {
 /// `package.json` to the given target, which is either a version or one of
 /// [`TAGS`], without changing anything yet.
 ///
+/// A version with only a major, or a major and minor, such as `24` or `24.22`,
+/// is resolved to the newest release matching it.
+///
 /// If no target is given, Node.js is bumped to the `lts` tag.
 ///
 /// # Errors
@@ -36,9 +39,16 @@ pub fn prepare(target: Option<&str>) -> Result<Bump> {
     println!("checking that the repository is ready");
     tool::check_ready(&PATHS)?;
     let target = target.unwrap_or("lts");
-    let version = tool::resolve_target("Node.js", "nodejs/node", "v", target, &TAGS, |tag| {
-        tag_version(&fetch_index()?, tag)
-    })?;
+    let version = if is_partial_version(target) {
+        println!("finding the newest {target}.x version of Node.js");
+        let version = newest_version(&fetch_index()?, target)?;
+        println!("found Node.js {version}");
+        version
+    } else {
+        tool::resolve_target("Node.js", "nodejs/node", "v", target, &TAGS, |tag| {
+            tag_version(&fetch_index()?, tag)
+        })?
+    };
     let edit = bump_package_json(&tool::read("package.json")?, &version)?;
     Ok(Bump { version, edit })
 }
@@ -111,6 +121,45 @@ fn fetch_index() -> Result<String> {
         .with_context(|| format!("failed to request {url}"))
 }
 
+/// Returns whether a target is a plain version with only a major, or a major
+/// and minor, such as `24` or `24.22`, rather than a full version.
+fn is_partial_version(target: &str) -> bool {
+    tool::is_version(target) && target.split('.').count() < 3
+}
+
+/// Parses the index of Node.js releases into its list of releases, ordered from
+/// the newest version.
+fn parse_index(index: &str) -> Result<Vec<serde_json::Value>> {
+    let index: serde_json::Value =
+        serde_json::from_str(index).context("failed to parse the index of Node.js releases")?;
+    let serde_json::Value::Array(releases) = index else {
+        bail!("the index of Node.js releases is not an array");
+    };
+    Ok(releases)
+}
+
+/// Returns the version of a release in the index of Node.js releases without
+/// its `v` prefix, or `None` if it has no plain version, such as a prerelease.
+fn plain_version(release: &serde_json::Value) -> Option<&str> {
+    let version = release.get("version")?.as_str()?.strip_prefix('v')?;
+    tool::is_version(version).then_some(version)
+}
+
+/// Returns the newest plain version of Node.js in the index of Node.js
+/// releases that matches a partial version on whole parts, so `24` matches
+/// `24.22.1` but not `240.0.0`.
+fn newest_version(index: &str, partial: &str) -> Result<String> {
+    let prefix = format!("{partial}.");
+    parse_index(index)?
+        .iter()
+        .filter_map(plain_version)
+        .find(|version| version.starts_with(&prefix))
+        .map(str::to_string)
+        .with_context(|| {
+            format!("no {partial}.x release is found in the index of Node.js releases")
+        })
+}
+
 /// Returns the version of Node.js that a tag refers to in the index of Node.js
 /// releases: the newest release for `latest`, or the newest LTS release for
 /// `lts`.
@@ -118,19 +167,10 @@ fn fetch_index() -> Result<String> {
 /// Releases without a plain version, such as prereleases, are skipped, since
 /// they are never something to bump to.
 fn tag_version(index: &str, tag: &str) -> Result<String> {
-    let index: serde_json::Value =
-        serde_json::from_str(index).context("failed to parse the index of Node.js releases")?;
-    let Some(releases) = index.as_array() else {
-        bail!("the index of Node.js releases is not an array");
-    };
-
-    releases
+    parse_index(index)?
         .iter()
         .filter(|release| tag == "latest" || release.get("lts").is_some_and(|lts| lts != false))
-        .find_map(|release| {
-            let version = release.get("version")?.as_str()?.strip_prefix('v')?;
-            tool::is_version(version).then_some(version)
-        })
+        .find_map(plain_version)
         .map(str::to_string)
         .with_context(|| format!("no {tag} release is found in the index of Node.js releases"))
 }
@@ -244,6 +284,62 @@ mod tests {
   { "version": "v24.22.1", "lts": "Krypton" },
   { "version": "v22.30.0", "lts": "Jod" }
 ]"#;
+
+    #[test]
+    fn is_partial_version_or_not() {
+        for target in ["24", "24.22"] {
+            assert!(is_partial_version(target), "{target}");
+        }
+        for target in ["24.22.1", "lts", ""] {
+            assert!(!is_partial_version(target), "{target}");
+        }
+    }
+
+    const RELEASES: &str = r#"[
+  { "version": "v27.0.0-alpha.0" },
+  { "version": "v26.1.0" },
+  { "lts": "Krypton" },
+  { "version": "v24.22.1" },
+  { "version": "v24.21.0" },
+  { "version": "v2.0.0" }
+]"#;
+
+    #[test]
+    fn newest_version_valid() {
+        let cases = [
+            ("26", "26.1.0"),
+            ("24", "24.22.1"),
+            ("24.21", "24.21.0"),
+            ("2", "2.0.0"),
+        ];
+        for (partial, version) in cases {
+            assert_eq!(newest_version(RELEASES, partial).unwrap(), version);
+        }
+    }
+
+    #[test]
+    fn newest_version_invalid() {
+        let cases = [
+            ("{", "24", "failed to parse the index of Node.js releases"),
+            ("{}", "24", "the index of Node.js releases is not an array"),
+            (
+                RELEASES,
+                "27",
+                "no 27.x release is found in the index of Node.js releases",
+            ),
+            (
+                RELEASES,
+                "24.20",
+                "no 24.20.x release is found in the index of Node.js releases",
+            ),
+        ];
+        for (index, partial, error) in cases {
+            assert_eq!(
+                newest_version(index, partial).unwrap_err().to_string(),
+                error
+            );
+        }
+    }
 
     #[test]
     fn tag_version_valid() {
