@@ -65,6 +65,9 @@ pub struct Bump {
 ///
 /// If no target is given, pnpm is bumped to the `latest` tag.
 ///
+/// Versions and tags are looked up in the npm registry, where pnpm is
+/// installed from.
+///
 /// pnpm is bumped in the `devEngines.packageManager` field, or in the
 /// `packageManager` field if the former is not set.
 ///
@@ -81,9 +84,13 @@ pub fn prepare(target: Option<&str>) -> Result<Bump> {
     let field = Field::find(&value)?;
     tool::check_ready(field.paths())?;
     let target = target.unwrap_or("latest");
-    let version = tool::resolve_target("pnpm", "pnpm/pnpm", "v", target, &TAGS, |_| {
-        tool::latest_release("pnpm/pnpm", "v")
-    })?;
+    let version = tool::resolve_target(
+        "pnpm",
+        target,
+        &TAGS,
+        |version| check_published(&fetch_registry()?, version),
+        |tag| tag_version(&fetch_registry()?, tag),
+    )?;
     let edit = bump_package_json(&package_json, &value, &field, &version)?;
     Ok(Bump {
         version,
@@ -181,6 +188,52 @@ fn bump_package_json(
     }
 }
 
+/// Fetches the document of pnpm in the npm registry, in its abbreviated form
+/// that lists every published version along with the dist-tags.
+#[cfg(not(tarpaulin_include))] // Sends a request, so it is not unit tested.
+fn fetch_registry() -> Result<String> {
+    let url = "https://registry.npmjs.org/pnpm";
+    ureq::get(url)
+        .header("Accept", "application/vnd.npm.install-v1+json")
+        .call()
+        .and_then(|mut response| response.body_mut().read_to_string())
+        .with_context(|| format!("failed to request {url}"))
+}
+
+/// Parses the document of pnpm in the npm registry.
+fn parse_registry(registry: &str) -> Result<serde_json::Value> {
+    serde_json::from_str(registry).context("failed to parse the npm registry document of pnpm")
+}
+
+/// Checks that a version of pnpm is published to the npm registry, as listed
+/// in the `versions` field of its document.
+fn check_published(registry: &str, version: &str) -> Result<()> {
+    let registry = parse_registry(registry)?;
+    let Some(versions) = registry
+        .get("versions")
+        .and_then(serde_json::Value::as_object)
+    else {
+        bail!("the npm registry document of pnpm has no versions");
+    };
+    if !versions.contains_key(version) {
+        bail!("pnpm {version} is not released: it's not in the npm registry");
+    }
+    Ok(())
+}
+
+/// Returns the version of pnpm that a tag refers to in the `dist-tags` field
+/// of its document in the npm registry, such as the version pnpm marks as
+/// `latest`.
+fn tag_version(registry: &str, tag: &str) -> Result<String> {
+    parse_registry(registry)?
+        .get("dist-tags")
+        .and_then(|tags| tags.get(tag))
+        .and_then(serde_json::Value::as_str)
+        .filter(|version| tool::is_version(version))
+        .map(str::to_string)
+        .with_context(|| format!("no plain {tag} version of pnpm is found in the npm registry"))
+}
+
 /// Reads the pnpm version range from the value of the
 /// `devEngines.packageManager` field.
 fn read_dev_engines_range(package_manager: &serde_json::Value) -> Result<&str> {
@@ -220,6 +273,85 @@ fn read_package_manager_version(package_manager: &serde_json::Value) -> Result<&
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    const REGISTRY: &str = r#"{
+  "name": "pnpm",
+  "dist-tags": { "latest": "12.16.1", "next-12": "12.17.0-rc.1" },
+  "versions": { "11.28.9": {}, "12.16.1": {}, "12.17.0-rc.1": {} }
+}"#;
+
+    #[test]
+    fn check_published_valid() {
+        for version in ["11.28.9", "12.16.1"] {
+            check_published(REGISTRY, version).unwrap();
+        }
+    }
+
+    #[test]
+    fn check_published_invalid() {
+        let cases = [
+            (
+                "{",
+                "12.16.1",
+                "failed to parse the npm registry document of pnpm",
+            ),
+            (
+                "{}",
+                "12.16.1",
+                "the npm registry document of pnpm has no versions",
+            ),
+            (
+                REGISTRY,
+                "12.16.2",
+                "pnpm 12.16.2 is not released: it's not in the npm registry",
+            ),
+            (
+                REGISTRY,
+                "12",
+                "pnpm 12 is not released: it's not in the npm registry",
+            ),
+        ];
+        for (registry, version, error) in cases {
+            assert_eq!(
+                check_published(registry, version).unwrap_err().to_string(),
+                error
+            );
+        }
+    }
+
+    #[test]
+    fn tag_version_valid() {
+        assert_eq!(tag_version(REGISTRY, "latest").unwrap(), "12.16.1");
+    }
+
+    #[test]
+    fn tag_version_invalid() {
+        let cases = [
+            (
+                "{",
+                "latest",
+                "failed to parse the npm registry document of pnpm",
+            ),
+            (
+                "{}",
+                "latest",
+                "no plain latest version of pnpm is found in the npm registry",
+            ),
+            (
+                r#"{ "dist-tags": { "latest": 12 } }"#,
+                "latest",
+                "no plain latest version of pnpm is found in the npm registry",
+            ),
+            (
+                REGISTRY,
+                "next-12",
+                "no plain next-12 version of pnpm is found in the npm registry",
+            ),
+        ];
+        for (registry, tag, error) in cases {
+            assert_eq!(tag_version(registry, tag).unwrap_err().to_string(), error);
+        }
+    }
 
     /// Bumps pnpm in a `package.json` file as `prepare` does, returning the
     /// edit along with the field it was bumped in.

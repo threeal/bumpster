@@ -39,21 +39,20 @@ pub fn check_release(name: &str, repository: &str, tag_prefix: &str, version: &s
 }
 
 /// Resolves the target of a bump to the version to bump a tool to, where the
-/// target is either a version, which is checked to be released in the given
-/// GitHub repository, or one of the tool's `tags`, which is resolved to a
-/// version by `resolve_tag`.
+/// target is either a version, which is checked to be released by
+/// `check_version`, or one of the tool's `tags`, which is resolved to a version
+/// by `resolve_tag`.
 #[cfg(not(tarpaulin_include))] // Sends requests, so it is not unit tested.
 pub fn resolve_target(
     name: &str,
-    repository: &str,
-    tag_prefix: &str,
     target: &str,
     tags: &[&str],
+    check_version: impl FnOnce(&str) -> Result<()>,
     resolve_tag: impl FnOnce(&str) -> Result<String>,
 ) -> Result<String> {
     if is_version(target) {
         println!("checking that {name} {target} is released");
-        check_release(name, repository, tag_prefix, target)?;
+        check_version(target)?;
         return Ok(target.to_string());
     }
 
