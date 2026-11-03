@@ -60,9 +60,13 @@ fn resolve_version(target: &str) -> Result<String> {
         return Ok(version);
     }
 
-    tool::resolve_target("Node.js", "nodejs/node", "v", target, &TAGS, |tag| {
-        tag_version(&fetch_index()?, tag)
-    })
+    tool::resolve_target(
+        "Node.js",
+        target,
+        &TAGS,
+        |version| tool::check_release("Node.js", "nodejs/node", "v", version),
+        |tag| tag_version(&fetch_index()?, tag),
+    )
 }
 
 impl Bump {

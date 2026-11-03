@@ -91,10 +91,9 @@ pub fn prepare<'a>(plugin: &'a Plugin, target: Option<&str>) -> Result<Bump<'a>>
     let target = target.unwrap_or("latest");
     let version = tool::resolve_target(
         plugin.name,
-        plugin.repository,
-        plugin.tag_prefix,
         target,
         &TAGS,
+        |version| tool::check_release(plugin.name, plugin.repository, plugin.tag_prefix, version),
         |_| tool::latest_release(plugin.repository, plugin.tag_prefix),
     )?;
     let edit = bump_url(&tool::read("dprint.json")?, &version, plugin)?;
