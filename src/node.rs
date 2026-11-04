@@ -53,7 +53,7 @@ pub fn prepare(target: Option<&str>) -> Result<Bump> {
 /// one of [`TAGS`].
 #[cfg(not(tarpaulin_include))] // Sends requests, so it is not unit tested.
 fn resolve_version(target: &str) -> Result<String> {
-    if is_partial_version(target) {
+    if tool::is_partial_version(target) {
         println!("finding the newest {target}.x version of Node.js");
         let version = newest_version(&fetch_index()?, target)?;
         println!("found Node.js {version}");
@@ -149,12 +149,6 @@ fn fetch_index() -> Result<String> {
         .call()
         .and_then(|mut response| response.body_mut().read_to_string())
         .with_context(|| format!("failed to request {url}"))
-}
-
-/// Returns whether a target is a plain version with only a major, or a major
-/// and minor, such as `24` or `24.22`, rather than a full version.
-fn is_partial_version(target: &str) -> bool {
-    tool::is_version(target) && target.split('.').count() < 3
 }
 
 /// Parses the index of Node.js releases into its list of releases, ordered from
@@ -336,16 +330,6 @@ mod tests {
   { "version": "v24.22.1", "lts": "Krypton" },
   { "version": "v22.30.0", "lts": "Jod" }
 ]"#;
-
-    #[test]
-    fn is_partial_version_or_not() {
-        for target in ["24", "24.22"] {
-            assert!(is_partial_version(target), "{target}");
-        }
-        for target in ["24.22.1", "lts", ""] {
-            assert!(!is_partial_version(target), "{target}");
-        }
-    }
 
     const RELEASES: &str = r#"[
   { "version": "v27.0.0-alpha.0" },

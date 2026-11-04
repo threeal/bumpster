@@ -69,6 +69,13 @@ pub fn is_version(target: &str) -> bool {
     !target.is_empty() && target.chars().all(|c| c.is_ascii_digit() || c == '.')
 }
 
+/// Returns whether a target is a plain version with only a major, or a major
+/// and minor, such as `24` or `24.22`, rather than a full version.
+#[must_use]
+pub fn is_partial_version(target: &str) -> bool {
+    is_version(target) && target.split('.').count() < 3
+}
+
 /// Checks that a tag is one of the tags supported by a tool.
 pub fn check_tag(name: &str, tag: &str, tags: &[&str]) -> Result<()> {
     if !tags.contains(&tag) {
@@ -272,6 +279,16 @@ mod tests {
         }
         for target in ["", "latest", "lts", "v24.22.1", "24.x"] {
             assert!(!is_version(target), "{target}");
+        }
+    }
+
+    #[test]
+    fn is_partial_version_or_not() {
+        for target in ["24", "24.22"] {
+            assert!(is_partial_version(target), "{target}");
+        }
+        for target in ["24.22.1", "lts", ""] {
+            assert!(!is_partial_version(target), "{target}");
         }
     }
 
