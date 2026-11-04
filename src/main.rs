@@ -41,7 +41,10 @@ fn main() {
         .subcommand(
             clap::Command::new("pnpm")
                 .about("Bump pnpm in the devEngines.packageManager or packageManager field of package.json")
-                .arg(target_arg(&bumpster::pnpm::TAGS, "pnpm's latest release (latest)"))
+                .arg(target_arg(
+                    &bumpster::pnpm::TAGS,
+                    "the newest release of its current major version",
+                ))
                 .arg(yes_arg()),
         )
         .get_matches();

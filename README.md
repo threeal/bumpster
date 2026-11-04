@@ -24,7 +24,7 @@ The version can also be a tag that resolves to a released version, such as `late
 
 - **`dprint <plugin>`** — a dprint plugin in the `plugins` field of `dprint.json`, where `<plugin>` is one of `json`, `markdown`, `toml`, or `yaml` (for `g-plane/pretty_yaml`). It defaults to the `latest` tag, the plugin's latest GitHub release.
 - **`node`** — Node.js, in the `devEngines.runtime` field of `package.json`, with `pnpm-lock.yaml` updated to match. It defaults to the newest release of the major version already in `package.json`, and also supports the `lts` tag, the newest LTS release, and `latest`, the newest release. A version with only a major, or a major and minor, such as `24` or `24.22`, bumps to the newest release matching it.
-- **`pnpm`** — pnpm, in the `devEngines.packageManager` field of `package.json` with `pnpm-lock.yaml` updated to match, or in the `packageManager` field if that's not set. It defaults to the `latest` tag, the version pnpm marks as latest on npm. A version with only a major, or a major and minor, such as `10` or `10.18`, bumps to the newest release matching it. Its versions are looked up in the npm registry, where pnpm is installed from.
+- **`pnpm`** — pnpm, in the `devEngines.packageManager` field of `package.json` with `pnpm-lock.yaml` updated to match, or in the `packageManager` field if that's not set. It defaults to the newest release of the major version already in `package.json`, and also supports the `latest` tag, the version pnpm marks as latest on npm. A version with only a major, or a major and minor, such as `10` or `10.18`, bumps to the newest release matching it. Its versions are looked up in the npm registry, where pnpm is installed from.
 
 ## License
 
