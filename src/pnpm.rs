@@ -66,7 +66,8 @@ pub struct Bump {
 /// A version with only a major, or a major and minor, such as `10` or `10.18`,
 /// is resolved to the newest release matching it.
 ///
-/// If no target is given, pnpm is bumped to the `latest` tag.
+/// If no target is given, pnpm is bumped to the newest release of the major
+/// version it's already on in `package.json`.
 ///
 /// Versions and tags are looked up in the npm registry, where pnpm is
 /// installed from.
@@ -86,7 +87,10 @@ pub fn prepare(target: Option<&str>) -> Result<Bump> {
     let value = parse_package_json(&package_json)?;
     let field = Field::find(&value)?;
     tool::check_ready(field.paths())?;
-    let version = resolve_version(target.unwrap_or("latest"))?;
+    let version = match target {
+        Some(target) => resolve_version(target)?,
+        None => resolve_version(&current_major(&value, &field)?)?,
+    };
     let edit = bump_package_json(&package_json, &value, &field, &version)?;
     Ok(Bump {
         version,
@@ -177,11 +181,7 @@ fn bump_package_json(
     match field {
         Field::DevEngines => {
             let range = read_dev_engines_range(&value["devEngines"]["packageManager"])?;
-            let Some((prefix, current)) = tool::split_range(range) else {
-                bail!(
-                    "devEngines.packageManager.version in package.json is not a simple range: {range}"
-                );
-            };
+            let (prefix, current) = split_dev_engines_range(range)?;
             tool::check_newer("pnpm", current, version)?;
 
             let to = format!("{prefix}{version}");
@@ -203,6 +203,27 @@ fn bump_package_json(
             Ok(Edit { content, from, to })
         }
     }
+}
+
+/// Returns the major version of pnpm in the given field of a `package.json`
+/// file, parsed as `value`, such as `10` for `^10.18.0` or `pnpm@10.18.0`.
+fn current_major(value: &serde_json::Value, field: &Field) -> Result<String> {
+    let current = match field {
+        Field::DevEngines => {
+            let range = read_dev_engines_range(&value["devEngines"]["packageManager"])?;
+            split_dev_engines_range(range)?.1
+        }
+        Field::PackageManager => read_package_manager_version(&value["packageManager"])?,
+    };
+    Ok(current.split('.').next().unwrap_or_default().to_string())
+}
+
+/// Splits the pnpm version range from the `devEngines.packageManager` field
+/// into its prefix and plain version, as [`tool::split_range`] does.
+fn split_dev_engines_range(range: &str) -> Result<(&str, &str)> {
+    tool::split_range(range).with_context(|| {
+        format!("devEngines.packageManager.version in package.json is not a simple range: {range}")
+    })
 }
 
 /// Fetches the document of pnpm in the npm registry, in its abbreviated form
@@ -550,6 +571,48 @@ mod tests {
                     "devEngines.packageManager.version in package.json is not a simple range: {range}"
                 )
             );
+        }
+    }
+
+    /// Returns the major version of pnpm in a `package.json` file as `prepare`
+    /// finds it.
+    fn major(package_json: &str) -> Result<String> {
+        let value = parse_package_json(package_json)?;
+        let field = Field::find(&value)?;
+        current_major(&value, &field)
+    }
+
+    #[test]
+    fn current_major_valid() {
+        let cases = [
+            (dev_engines_package_json("^10.18.0"), "10"),
+            (dev_engines_package_json("~11.2"), "11"),
+            (dev_engines_package_json("12"), "12"),
+            (r#"{ "packageManager": "pnpm@10.18.0" }"#.to_string(), "10"),
+        ];
+        for (package_json, current) in cases {
+            assert_eq!(major(&package_json).unwrap(), current);
+        }
+    }
+
+    #[test]
+    fn current_major_invalid() {
+        let cases = [
+            (
+                dev_engines_package_json(">=10 <11"),
+                "devEngines.packageManager.version in package.json is not a simple range: >=10 <11",
+            ),
+            (
+                r#"{ "devEngines": { "packageManager": { "name": "yarn" } } }"#.to_string(),
+                r#"devEngines.packageManager in package.json is not pnpm: {"name":"yarn"}"#,
+            ),
+            (
+                r#"{ "packageManager": "pnpm@11.0.0-rc.1" }"#.to_string(),
+                "packageManager in package.json has no plain version: pnpm@11.0.0-rc.1",
+            ),
+        ];
+        for (package_json, error) in cases {
+            assert_eq!(major(&package_json).unwrap_err().to_string(), error);
         }
     }
 
