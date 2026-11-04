@@ -63,6 +63,9 @@ pub struct Bump {
 /// Prepares a bump of pnpm in `package.json` to the given target, which is
 /// either a version or one of [`TAGS`], without changing anything yet.
 ///
+/// A version with only a major, or a major and minor, such as `10` or `10.18`,
+/// is resolved to the newest release matching it.
+///
 /// If no target is given, pnpm is bumped to the `latest` tag.
 ///
 /// Versions and tags are looked up in the npm registry, where pnpm is
@@ -83,20 +86,34 @@ pub fn prepare(target: Option<&str>) -> Result<Bump> {
     let value = parse_package_json(&package_json)?;
     let field = Field::find(&value)?;
     tool::check_ready(field.paths())?;
-    let target = target.unwrap_or("latest");
-    let version = tool::resolve_target(
-        "pnpm",
-        target,
-        &TAGS,
-        |version| check_published(&fetch_registry()?, version),
-        |tag| tag_version(&fetch_registry()?, tag),
-    )?;
+    let version = resolve_version(target.unwrap_or("latest"))?;
     let edit = bump_package_json(&package_json, &value, &field, &version)?;
     Ok(Bump {
         version,
         edit,
         field,
     })
+}
+
+/// Resolves the target of a bump to the version to bump pnpm to, where the
+/// target is a version, a version with only a major or a major and minor, or
+/// one of [`TAGS`].
+#[cfg(not(tarpaulin_include))] // Sends requests, so it is not unit tested.
+fn resolve_version(target: &str) -> Result<String> {
+    if tool::is_partial_version(target) {
+        println!("finding the newest {target}.x version of pnpm");
+        let version = newest_version(&fetch_registry()?, target)?;
+        println!("found pnpm {version}");
+        return Ok(version);
+    }
+
+    tool::resolve_target(
+        "pnpm",
+        target,
+        &TAGS,
+        |version| check_published(&fetch_registry()?, version),
+        |tag| tag_version(&fetch_registry()?, tag),
+    )
 }
 
 impl Bump {
@@ -205,20 +222,43 @@ fn parse_registry(registry: &str) -> Result<serde_json::Value> {
     serde_json::from_str(registry).context("failed to parse the npm registry document of pnpm")
 }
 
+/// Returns the `versions` field of the parsed document of pnpm in the npm
+/// registry, keyed by every published version.
+fn published_versions(
+    registry: &serde_json::Value,
+) -> Result<&serde_json::Map<String, serde_json::Value>> {
+    registry
+        .get("versions")
+        .and_then(serde_json::Value::as_object)
+        .context("the npm registry document of pnpm has no versions")
+}
+
 /// Checks that a version of pnpm is published to the npm registry, as listed
 /// in the `versions` field of its document.
 fn check_published(registry: &str, version: &str) -> Result<()> {
     let registry = parse_registry(registry)?;
-    let Some(versions) = registry
-        .get("versions")
-        .and_then(serde_json::Value::as_object)
-    else {
-        bail!("the npm registry document of pnpm has no versions");
-    };
-    if !versions.contains_key(version) {
+    if !published_versions(&registry)?.contains_key(version) {
         bail!("pnpm {version} is not released: it's not in the npm registry");
     }
     Ok(())
+}
+
+/// Returns the newest plain version of pnpm in its document in the npm
+/// registry that matches a partial version on whole parts, so `1` matches
+/// `1.43.1` but not `10.34.9`.
+///
+/// The newest version is found by comparing every match, since the registry
+/// doesn't list versions in version order, and pnpm keeps releasing older
+/// majors alongside the newest one.
+fn newest_version(registry: &str, partial: &str) -> Result<String> {
+    let registry = parse_registry(registry)?;
+    let prefix = format!("{partial}.");
+    published_versions(&registry)?
+        .keys()
+        .filter(|version| tool::is_version(version) && version.starts_with(&prefix))
+        .max_by(|a, b| tool::compare_versions(a, b))
+        .cloned()
+        .with_context(|| format!("no {partial}.x version of pnpm is found in the npm registry"))
 }
 
 /// Returns the version of pnpm that a tag refers to in the `dist-tags` field
@@ -314,6 +354,57 @@ mod tests {
         for (registry, version, error) in cases {
             assert_eq!(
                 check_published(registry, version).unwrap_err().to_string(),
+                error
+            );
+        }
+    }
+
+    const VERSIONS: &str = r#"{
+  "versions": {
+    "11.28.9": {},
+    "12.16.1": {},
+    "12.9.0": {},
+    "12.17.0-rc.1": {},
+    "1.43.1": {},
+    "10.34.9": {}
+  }
+}"#;
+
+    #[test]
+    fn newest_version_valid() {
+        let cases = [("12", "12.16.1"), ("12.9", "12.9.0"), ("1", "1.43.1")];
+        for (partial, version) in cases {
+            assert_eq!(newest_version(VERSIONS, partial).unwrap(), version);
+        }
+    }
+
+    #[test]
+    fn newest_version_invalid() {
+        let cases = [
+            (
+                "{",
+                "12",
+                "failed to parse the npm registry document of pnpm",
+            ),
+            (
+                "{}",
+                "12",
+                "the npm registry document of pnpm has no versions",
+            ),
+            (
+                VERSIONS,
+                "13",
+                "no 13.x version of pnpm is found in the npm registry",
+            ),
+            (
+                VERSIONS,
+                "12.17",
+                "no 12.17.x version of pnpm is found in the npm registry",
+            ),
+        ];
+        for (registry, partial, error) in cases {
+            assert_eq!(
+                newest_version(registry, partial).unwrap_err().to_string(),
                 error
             );
         }
