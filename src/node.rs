@@ -38,7 +38,8 @@ pub struct Bump {
 #[cfg(not(tarpaulin_include))] // Sends requests, so it is not unit tested.
 pub fn prepare(target: Option<&str>) -> Result<Bump> {
     println!("checking that the repository is ready");
-    tool::check_ready(&PATHS)?;
+    tool::prepare_repository()?;
+    tool::check_paths(&PATHS)?;
     let package_json = tool::read("package.json")?;
     let version = match target {
         Some(target) => resolve_version(target)?,

@@ -18,6 +18,19 @@ pub fn is_clean() -> Result<bool> {
     Ok(run("git", &["status", "--porcelain"])?.is_empty())
 }
 
+/// Fast-forwards the current branch to the given branch of `origin`, failing
+/// instead if it can't be fast-forwarded.
+pub fn pull(branch: &str) -> Result<()> {
+    run("git", &["pull", "--ff-only", "origin", branch]).map(|_| ())
+}
+
+/// Returns whether the given branch has commits that its counterpart on
+/// `origin` doesn't.
+pub fn is_ahead_of_origin(branch: &str) -> Result<bool> {
+    let range = format!("origin/{branch}..{branch}");
+    Ok(run("git", &["rev-list", "--count", &range])? != "0")
+}
+
 /// Creates a new branch and switches to it.
 pub fn create_branch(name: &str) -> Result<()> {
     run("git", &["switch", "-c", name]).map(|_| ())
