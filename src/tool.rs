@@ -4,23 +4,37 @@ use crate::{gh, git};
 use anyhow::{Context, Result, bail};
 use std::cmp::Ordering;
 
-/// Checks that the current repository is ready for a bump: on the main branch,
-/// with a clean working tree, with every given path existing, and with `gh`
-/// logged in to open the pull request.
+/// Prepares the current repository for a bump, by checking that it's on the
+/// main branch with a clean working tree and with `gh` logged in to open the
+/// pull request, then pulling the main branch from `origin` so the bump starts
+/// from its latest commit.
 #[cfg(not(tarpaulin_include))] // Runs commands, so it is not unit tested.
-pub fn check_ready(paths: &[&str]) -> Result<()> {
+pub fn prepare_repository() -> Result<()> {
     if git::current_branch()? != "main" {
         bail!("not on the main branch");
     }
     if !git::is_clean()? {
         bail!("the working tree is not clean");
     }
+    gh::check_auth()?;
+
+    println!("pulling the main branch from origin");
+    git::pull("main")?;
+    if git::is_ahead_of_origin("main")? {
+        bail!("the main branch has commits not pushed to origin");
+    }
+    Ok(())
+}
+
+/// Checks that every given path to edit exists.
+#[cfg(not(tarpaulin_include))] // Reads real files, so it is not unit tested.
+pub fn check_paths(paths: &[&str]) -> Result<()> {
     for path in paths {
         if !std::path::Path::new(path).exists() {
             bail!("{path} does not exist");
         }
     }
-    gh::check_auth()
+    Ok(())
 }
 
 /// Checks that the given version of a tool is released, by requesting its

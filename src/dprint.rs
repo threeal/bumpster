@@ -87,7 +87,8 @@ pub struct Bump<'a> {
 #[cfg(not(tarpaulin_include))] // Sends requests, so it is not unit tested.
 pub fn prepare<'a>(plugin: &'a Plugin, target: Option<&str>) -> Result<Bump<'a>> {
     println!("checking that the repository is ready");
-    tool::check_ready(&["dprint.json"])?;
+    tool::prepare_repository()?;
+    tool::check_paths(&["dprint.json"])?;
     let target = target.unwrap_or("latest");
     let version = tool::resolve_target(
         plugin.name,
