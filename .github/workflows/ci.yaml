@@ -12,13 +12,13 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7.0.1
 
-      - name: Setup Lefthook
-        uses: threeal/setup-lefthook-action@v1.0.0
-
       - name: Install tools
         uses: taiki-e/install-action@v2
         with:
           tool: cargo-tarpaulin,dprint
+
+      - name: Setup Lefthook
+        uses: threeal/setup-lefthook-action@v1.0.0
 
       - name: Check pre-commit hook
         run: lefthook run pre-commit --all-files
