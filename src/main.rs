@@ -10,7 +10,7 @@ fn main() {
             tags.join(", ")
         ))
     };
-    let yes_arg = || clap::arg!(-y --yes "Open the pull request without asking to confirm it");
+    let yes_arg = || clap::arg!(-y --yes "Switch to the main branch and open the pull request without asking to confirm them");
     let matches = clap::Command::new("bumpster")
         .version(env!("CARGO_PKG_VERSION"))
         .about("Bump the version of a tool in the current repository")
@@ -58,12 +58,12 @@ fn main() {
                 .iter()
                 .find(|(name, _)| *name == plugin)
                 .expect("the plugin is validated by clap");
-            bumpster::dprint::prepare(plugin, target(matches))
+            bumpster::dprint::prepare(plugin, target(matches), yes(matches))
                 .and_then(|bump| finish(&bump.change(), yes(matches), || bump.apply()))
         }
-        Some(("node", matches)) => bumpster::node::prepare(target(matches))
+        Some(("node", matches)) => bumpster::node::prepare(target(matches), yes(matches))
             .and_then(|bump| finish(&bump.change(), yes(matches), || bump.apply())),
-        Some(("pnpm", matches)) => bumpster::pnpm::prepare(target(matches))
+        Some(("pnpm", matches)) => bumpster::pnpm::prepare(target(matches), yes(matches))
             .and_then(|bump| finish(&bump.change(), yes(matches), || bump.apply())),
         _ => unreachable!("a subcommand is required"),
     };

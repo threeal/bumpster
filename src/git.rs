@@ -31,6 +31,11 @@ pub fn is_ahead_of_origin(branch: &str) -> Result<bool> {
     Ok(run("git", &["rev-list", "--count", &range])? != "0")
 }
 
+/// Switches to an existing branch.
+pub fn switch(branch: &str) -> Result<()> {
+    run("git", &["switch", branch]).map(|_| ())
+}
+
 /// Creates a new branch and switches to it.
 pub fn create_branch(name: &str) -> Result<()> {
     run("git", &["switch", "-c", name]).map(|_| ())

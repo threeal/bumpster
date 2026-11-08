@@ -1,17 +1,30 @@
 //! Steps shared by the bump flows of the supported tools.
 
-use crate::{gh, git};
+use crate::{gh, git, prompt};
 use anyhow::{Context, Result, bail};
 use std::cmp::Ordering;
+use std::io::IsTerminal;
 
-/// Prepares the current repository for a bump, by checking that it's on the
-/// main branch with a clean working tree and with `gh` logged in to open the
-/// pull request, then pulling the main branch from `origin` so the bump starts
-/// from its latest commit.
+/// Prepares the current repository for a bump, by switching it to the main
+/// branch if it's not on it, after asking unless `yes` is set, then checking
+/// that it has a clean working tree and `gh` logged in to open the pull
+/// request, then pulling the main branch from `origin` so the bump starts from
+/// its latest commit.
 #[cfg(not(tarpaulin_include))] // Runs commands, so it is not unit tested.
-pub fn prepare_repository() -> Result<()> {
+pub fn prepare_repository(yes: bool) -> Result<()> {
     if git::current_branch()? != "main" {
-        bail!("not on the main branch");
+        if !yes {
+            if !std::io::stdin().is_terminal() {
+                bail!(
+                    "not on the main branch, and no terminal to confirm switching to it on, pass --yes to switch without confirming"
+                );
+            }
+            if !prompt::confirm("not on the main branch, switch to it")? {
+                bail!("not on the main branch");
+            }
+        }
+        println!("switching to the main branch");
+        git::switch("main")?;
     }
     if !git::is_clean()? {
         bail!("the working tree is not clean");
