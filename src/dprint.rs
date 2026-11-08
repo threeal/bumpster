@@ -79,15 +79,18 @@ pub struct Bump<'a> {
 ///
 /// If no target is given, the plugin is bumped to the `latest` tag.
 ///
+/// If the repository is not on the main branch, it asks whether to switch to
+/// it first, unless `yes` is set.
+///
 /// # Errors
 ///
 /// Returns an error if the repository is not ready for the bump, if the
 /// target is not a released version or a known tag, or if the plugin can't be
 /// bumped to it.
 #[cfg(not(tarpaulin_include))] // Sends requests, so it is not unit tested.
-pub fn prepare<'a>(plugin: &'a Plugin, target: Option<&str>) -> Result<Bump<'a>> {
+pub fn prepare<'a>(plugin: &'a Plugin, target: Option<&str>, yes: bool) -> Result<Bump<'a>> {
     println!("checking that the repository is ready");
-    tool::prepare_repository()?;
+    tool::prepare_repository(yes)?;
     tool::check_paths(&["dprint.json"])?;
     let target = target.unwrap_or("latest");
     let version = tool::resolve_target(

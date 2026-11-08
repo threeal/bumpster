@@ -30,15 +30,18 @@ pub struct Bump {
 /// If no target is given, Node.js is bumped to the newest release of the major
 /// version it's already on in `package.json`.
 ///
+/// If the repository is not on the main branch, it asks whether to switch to
+/// it first, unless `yes` is set.
+///
 /// # Errors
 ///
 /// Returns an error if the repository is not ready for the bump, if the
 /// target is not a released version or a known tag, or if Node.js can't be
 /// bumped to it.
 #[cfg(not(tarpaulin_include))] // Sends requests, so it is not unit tested.
-pub fn prepare(target: Option<&str>) -> Result<Bump> {
+pub fn prepare(target: Option<&str>, yes: bool) -> Result<Bump> {
     println!("checking that the repository is ready");
-    tool::prepare_repository()?;
+    tool::prepare_repository(yes)?;
     tool::check_paths(&PATHS)?;
     let package_json = tool::read("package.json")?;
     let version = match target {
