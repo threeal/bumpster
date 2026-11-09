@@ -75,8 +75,9 @@ pub struct Bump {
 /// pnpm is bumped in the `devEngines.packageManager` field, or in the
 /// `packageManager` field if the former is not set.
 ///
-/// If the repository is not on the main branch, it asks whether to switch to
-/// it first, unless `yes` is set.
+/// If the repository is not on the main branch or its working tree is not
+/// clean, it asks whether to switch to the main branch or discard the changes
+/// first, unless `yes` is set.
 ///
 /// # Errors
 ///

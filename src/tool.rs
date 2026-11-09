@@ -5,29 +5,46 @@ use anyhow::{Context, Result, bail};
 use std::cmp::Ordering;
 use std::io::IsTerminal;
 
-/// Prepares the current repository for a bump, by switching it to the main
-/// branch if it's not on it, after asking unless `yes` is set, then checking
-/// that it has a clean working tree and `gh` logged in to open the pull
-/// request, then pulling the main branch from `origin` so the bump starts from
-/// its latest commit.
+/// Prepares the current repository for a bump, by getting it onto the main
+/// branch with a clean working tree, discarding its changes or switching to
+/// the main branch after asking unless `yes` is set, then checking that `gh` is
+/// logged in to open the pull request, then pulling the main branch from
+/// `origin` so the bump starts from its latest commit.
 #[cfg(not(tarpaulin_include))] // Runs commands, so it is not unit tested.
 pub fn prepare_repository(yes: bool) -> Result<()> {
-    if git::current_branch()? != "main" {
-        if !yes {
-            if !std::io::stdin().is_terminal() {
-                bail!(
-                    "not on the main branch, and no terminal to confirm switching to it on, pass --yes to switch without confirming"
-                );
-            }
-            if !prompt::confirm("not on the main branch, switch to it")? {
-                bail!("not on the main branch");
-            }
+    let on_main = git::current_branch()? == "main";
+    let changes = git::changes()?;
+    match (on_main, changes.is_empty()) {
+        (true, true) => {}
+        (false, true) => {
+            confirm_fix("not on the main branch", "switch to it", true, yes)?;
+            println!("switching to the main branch");
+            git::switch("main")?;
         }
-        println!("switching to the main branch");
-        git::switch("main")?;
-    }
-    if !git::is_clean()? {
-        bail!("the working tree is not clean");
+        (false, false) => {
+            println!("uncommitted changes:\n{changes}");
+            confirm_fix(
+                "not on the main branch and the working tree is not clean",
+                "discard the changes and switch to the main branch",
+                false,
+                yes,
+            )?;
+            println!("discarding the changes");
+            git::discard_changes()?;
+            println!("switching to the main branch");
+            git::switch("main")?;
+        }
+        (true, false) => {
+            println!("uncommitted changes:\n{changes}");
+            confirm_fix(
+                "the working tree is not clean",
+                "discard the changes",
+                false,
+                yes,
+            )?;
+            println!("discarding the changes");
+            git::discard_changes()?;
+        }
     }
     gh::check_auth()?;
 
@@ -35,6 +52,25 @@ pub fn prepare_repository(yes: bool) -> Result<()> {
     git::pull("main")?;
     if git::is_ahead_of_origin("main")? {
         bail!("the main branch has commits not pushed to origin");
+    }
+    Ok(())
+}
+
+/// Confirms making the given fix to the given problem with the repository,
+/// asking whether to with `default` as the answer unless `yes` is set.
+///
+/// Returns an error naming the problem if the fix is declined or there's no
+/// terminal to ask on.
+#[cfg(not(tarpaulin_include))] // Reads from the terminal, so it is not unit tested.
+fn confirm_fix(problem: &str, fix: &str, default: bool, yes: bool) -> Result<()> {
+    if yes {
+        return Ok(());
+    }
+    if !std::io::stdin().is_terminal() {
+        bail!("{problem}, and no terminal to confirm on, pass --yes to {fix}");
+    }
+    if !prompt::confirm(&format!("{problem}, {fix}"), default)? {
+        bail!("{problem}");
     }
     Ok(())
 }

@@ -30,8 +30,9 @@ pub struct Bump {
 /// If no target is given, Node.js is bumped to the newest release of the major
 /// version it's already on in `package.json`.
 ///
-/// If the repository is not on the main branch, it asks whether to switch to
-/// it first, unless `yes` is set.
+/// If the repository is not on the main branch or its working tree is not
+/// clean, it asks whether to switch to the main branch or discard the changes
+/// first, unless `yes` is set.
 ///
 /// # Errors
 ///

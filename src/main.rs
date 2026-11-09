@@ -10,7 +10,7 @@ fn main() {
             tags.join(", ")
         ))
     };
-    let yes_arg = || clap::arg!(-y --yes "Switch to the main branch and open the pull request without asking to confirm them");
+    let yes_arg = || clap::arg!(-y --yes "Answer yes to every question, including discarding uncommitted changes");
     let matches = clap::Command::new("bumpster")
         .version(env!("CARGO_PKG_VERSION"))
         .about("Bump the version of a tool in the current repository")
@@ -104,7 +104,7 @@ fn finish(
                 "no terminal to confirm the bump on, pass --yes to make it without confirming"
             );
         }
-        if !bumpster::prompt::confirm("open a pull request")? {
+        if !bumpster::prompt::confirm("open a pull request", true)? {
             println!("aborted");
             return Ok(());
         }
