@@ -46,9 +46,10 @@ pub fn switch(branch: &str) -> Result<()> {
     run("git", &["switch", branch]).map(|_| ())
 }
 
-/// Creates a new branch and switches to it.
+/// Creates a new branch and switches to it, resetting the branch if it
+/// already exists.
 pub fn create_branch(name: &str) -> Result<()> {
-    run("git", &["switch", "-c", name]).map(|_| ())
+    run("git", &["switch", "-C", name]).map(|_| ())
 }
 
 /// Commits the given files with a sign-off and signature, skipping git hooks.
