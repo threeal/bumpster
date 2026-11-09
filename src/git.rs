@@ -13,9 +13,19 @@ pub fn current_branch() -> Result<String> {
     run("git", &["branch", "--show-current"])
 }
 
-/// Returns whether the working tree has no changes, including untracked files.
-pub fn is_clean() -> Result<bool> {
-    Ok(run("git", &["status", "--porcelain"])?.is_empty())
+/// Returns the changes in the working tree, including untracked files, in
+/// git's short status format, one file per line, or an empty string if there
+/// are none.
+pub fn changes() -> Result<String> {
+    run("git", &["status", "--short"])
+}
+
+/// Discards the changes in the working tree, by resetting tracked files,
+/// including staged changes, and removing untracked files, keeping ignored
+/// files.
+pub fn discard_changes() -> Result<()> {
+    run("git", &["reset", "--hard"])?;
+    run("git", &["clean", "-fd"]).map(|_| ())
 }
 
 /// Fast-forwards the current branch to the given branch of `origin`, failing

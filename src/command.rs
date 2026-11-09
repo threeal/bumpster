@@ -8,7 +8,9 @@
 use anyhow::{Context, Result, bail};
 use std::process::Command;
 
-/// Runs a program with the given arguments and returns its trimmed output.
+/// Runs a program with the given arguments and returns its output, with
+/// trailing whitespace trimmed so leading whitespace that's part of the output
+/// is kept.
 pub fn run(program: &str, args: &[&str]) -> Result<String> {
     let output = Command::new(program)
         .args(args)
@@ -25,5 +27,7 @@ pub fn run(program: &str, args: &[&str]) -> Result<String> {
         bail!("{program} {} failed: {}", args.join(" "), message.trim());
     }
 
-    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+    Ok(String::from_utf8_lossy(&output.stdout)
+        .trim_end()
+        .to_string())
 }
