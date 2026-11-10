@@ -121,10 +121,10 @@ impl Bump<'_> {
     }
 
     /// Applies the bump, then commits the change to a new branch, pushes it,
-    /// and opens a pull request for it if there isn't one already.
+    /// and opens a pull request for it, or updates the one already open.
     ///
     /// Returns the pull request, which is the one already open for the bump if
-    /// there is one, as pushing the branch updated it.
+    /// there is one.
     ///
     /// # Errors
     ///
@@ -145,7 +145,7 @@ impl Bump<'_> {
         println!("pushing {branch} to origin");
         git::push(&branch)?;
 
-        tool::find_or_open_pull_request(
+        tool::open_or_update_pull_request(
             &branch,
             plugin.name,
             plugin.repository,
