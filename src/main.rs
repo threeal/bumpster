@@ -90,12 +90,13 @@ fn yes(matches: &clap::ArgMatches) -> bool {
 
 /// Finishes a prepared bump that makes the given change, by showing the
 /// change and, unless confirmation is skipped, asking whether to go ahead,
-/// then applying it and showing the URL of its opened pull request.
+/// then applying it and showing the URL of its pull request, saying whether it
+/// was opened or an already open one was updated.
 #[cfg(not(tarpaulin_include))]
 fn finish(
     change: &str,
     yes: bool,
-    apply: impl FnOnce() -> anyhow::Result<String>,
+    apply: impl FnOnce() -> anyhow::Result<bumpster::PullRequest>,
 ) -> anyhow::Result<()> {
     println!("will update {change}");
     if !yes {
@@ -109,6 +110,11 @@ fn finish(
             return Ok(());
         }
     }
-    println!("opened {}", apply()?);
+    let pull_request = apply()?;
+    if pull_request.opened {
+        println!("opened {}", pull_request.url);
+    } else {
+        println!("updated {}", pull_request.url);
+    }
     Ok(())
 }

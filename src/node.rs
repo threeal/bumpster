@@ -1,7 +1,7 @@
 //! Bumping the version of Node.js in the `devEngines.runtime` field of a
 //! `package.json` file.
 
-use crate::tool::{self, Edit, replace_once};
+use crate::tool::{self, Edit, PullRequest, replace_once};
 use crate::{command, git};
 use anyhow::{Context, Result, bail};
 
@@ -86,15 +86,17 @@ impl Bump {
     }
 
     /// Applies the bump, with `pnpm-lock.yaml` updated to match, then commits
-    /// the change to a new branch, pushes it, and opens a pull request for it.
+    /// the change to a new branch, pushes it, and opens a pull request for it
+    /// if there isn't one already.
     ///
-    /// Returns the URL of the opened pull request.
+    /// Returns the pull request, which is the one already open for the bump if
+    /// there is one, as pushing the branch updated it.
     ///
     /// # Errors
     ///
     /// Returns an error if any step of it fails.
     #[cfg(not(tarpaulin_include))] // Runs commands, so it is not unit tested.
-    pub fn apply(self) -> Result<String> {
+    pub fn apply(self) -> Result<PullRequest> {
         let branch = tool::branch_name("node", &self.version);
         println!("creating branch {branch}");
         git::create_branch(&branch)?;
@@ -107,8 +109,7 @@ impl Bump {
         println!("pushing {branch} to origin");
         git::push(&branch)?;
 
-        println!("opening a pull request");
-        tool::open_pull_request("Node.js", "nodejs/node", "v", &self.version)
+        tool::find_or_open_pull_request(&branch, "Node.js", "nodejs/node", "v", &self.version)
     }
 }
 

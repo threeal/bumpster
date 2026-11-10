@@ -8,3 +8,5 @@ pub mod node;
 pub mod pnpm;
 pub mod prompt;
 mod tool;
+
+pub use tool::PullRequest;

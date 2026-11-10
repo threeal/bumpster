@@ -2,7 +2,7 @@
 //! `dprint.json` file.
 
 use crate::git;
-use crate::tool::{self, Edit, replace_once};
+use crate::tool::{self, Edit, PullRequest, replace_once};
 use anyhow::{Result, bail};
 
 /// A dprint plugin pinned by its URL in `dprint.json`.
@@ -121,15 +121,16 @@ impl Bump<'_> {
     }
 
     /// Applies the bump, then commits the change to a new branch, pushes it,
-    /// and opens a pull request for it.
+    /// and opens a pull request for it if there isn't one already.
     ///
-    /// Returns the URL of the opened pull request.
+    /// Returns the pull request, which is the one already open for the bump if
+    /// there is one, as pushing the branch updated it.
     ///
     /// # Errors
     ///
     /// Returns an error if any step of it fails.
     #[cfg(not(tarpaulin_include))] // Runs commands, so it is not unit tested.
-    pub fn apply(self) -> Result<String> {
+    pub fn apply(self) -> Result<PullRequest> {
         let plugin = self.plugin;
         let branch = tool::branch_name(plugin.name, &self.version);
         println!("creating branch {branch}");
@@ -144,8 +145,8 @@ impl Bump<'_> {
         println!("pushing {branch} to origin");
         git::push(&branch)?;
 
-        println!("opening a pull request");
-        tool::open_pull_request(
+        tool::find_or_open_pull_request(
+            &branch,
             plugin.name,
             plugin.repository,
             plugin.tag_prefix,

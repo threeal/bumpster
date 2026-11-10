@@ -236,22 +236,40 @@ pub fn commit_message(name: &str, version: &str) -> String {
     format!("bump {name} to version {version}")
 }
 
-/// Opens the pull request for bumping a tool to the given version, linking to
-/// its release in the given GitHub repository, where tags are the version
-/// prefixed by `tag_prefix`.
+/// The pull request for a bump.
+#[derive(Debug)]
+pub struct PullRequest {
+    /// The URL of the pull request.
+    pub url: String,
+    /// Whether the pull request was opened by the bump, rather than already
+    /// open from an earlier run of it, which the push updated.
+    pub opened: bool,
+}
+
+/// Finds the open pull request for bumping a tool to the given version on the
+/// given branch, or opens one if there is none, linking to its release in the
+/// given GitHub repository, where tags are the version prefixed by
+/// `tag_prefix`.
 ///
-/// Returns the URL of the opened pull request.
+/// An open pull request is kept as is, with its title and body untouched.
 #[cfg(not(tarpaulin_include))] // Runs commands, so it is not unit tested.
-pub fn open_pull_request(
+pub fn find_or_open_pull_request(
+    branch: &str,
     name: &str,
     repository: &str,
     tag_prefix: &str,
     version: &str,
-) -> Result<String> {
-    gh::create_pull_request(
+) -> Result<PullRequest> {
+    if let Some(url) = gh::find_pull_request(branch)? {
+        println!("updating the pull request");
+        return Ok(PullRequest { url, opened: false });
+    }
+    println!("opening a pull request");
+    let url = gh::create_pull_request(
         &pull_request_title(name, version),
         &pull_request_body(name, repository, tag_prefix, version),
-    )
+    )?;
+    Ok(PullRequest { url, opened: true })
 }
 
 /// Returns the title of the pull request for bumping a tool to the given
