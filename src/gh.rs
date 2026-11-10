@@ -34,6 +34,18 @@ pub fn find_pull_request(branch: &str) -> Result<Option<String>> {
     Ok(Some(url).filter(|url| !url.is_empty()))
 }
 
+/// Edits the pull request at the given URL to target `main` with the given
+/// title and body.
+pub fn edit_pull_request(url: &str, title: &str, body: &str) -> Result<()> {
+    run(
+        "gh",
+        &[
+            "pr", "edit", url, "--base", "main", "--title", title, "--body", body,
+        ],
+    )
+    .map(|_| ())
+}
+
 /// Opens a pull request for the current branch against `main`, returning its
 /// URL.
 pub fn create_pull_request(title: &str, body: &str) -> Result<String> {
