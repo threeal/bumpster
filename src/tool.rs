@@ -6,10 +6,10 @@ use std::cmp::Ordering;
 use std::io::IsTerminal;
 
 /// Prepares the current repository for a bump, by getting it onto the main
-/// branch with a clean working tree, discarding its changes or switching to
-/// the main branch after asking unless `yes` is set, then checking that `gh` is
-/// logged in to open the pull request, then pulling the main branch from
-/// `origin` so the bump starts from its latest commit.
+/// branch with a clean working tree, switching to the main branch and
+/// discarding its changes after asking unless `yes` is set, then checking that
+/// `gh` is logged in to open the pull request, then pulling the main branch
+/// from `origin` so the bump starts from its latest commit.
 #[cfg(not(tarpaulin_include))] // Runs commands, so it is not unit tested.
 pub fn prepare_repository(yes: bool) -> Result<()> {
     let on_main = git::current_branch()? == "main";
@@ -17,7 +17,6 @@ pub fn prepare_repository(yes: bool) -> Result<()> {
     match (on_main, changes.is_empty()) {
         (true, true) => {}
         (false, true) => {
-            confirm_fix("not on the main branch", "switch to it", true, yes)?;
             println!("switching to the main branch");
             git::switch("main")?;
         }
@@ -26,7 +25,6 @@ pub fn prepare_repository(yes: bool) -> Result<()> {
             confirm_fix(
                 "not on the main branch and the working tree is not clean",
                 "discard the changes and switch to the main branch",
-                false,
                 yes,
             )?;
             println!("discarding the changes");
@@ -36,12 +34,7 @@ pub fn prepare_repository(yes: bool) -> Result<()> {
         }
         (true, false) => {
             println!("uncommitted changes:\n{changes}");
-            confirm_fix(
-                "the working tree is not clean",
-                "discard the changes",
-                false,
-                yes,
-            )?;
+            confirm_fix("the working tree is not clean", "discard the changes", yes)?;
             println!("discarding the changes");
             git::discard_changes()?;
         }
@@ -57,19 +50,20 @@ pub fn prepare_repository(yes: bool) -> Result<()> {
 }
 
 /// Confirms making the given fix to the given problem with the repository,
-/// asking whether to with `default` as the answer unless `yes` is set.
+/// asking whether to with no as the default answer unless `yes` is set, since
+/// the fix can't be undone.
 ///
 /// Returns an error naming the problem if the fix is declined or there's no
 /// terminal to ask on.
 #[cfg(not(tarpaulin_include))] // Reads from the terminal, so it is not unit tested.
-fn confirm_fix(problem: &str, fix: &str, default: bool, yes: bool) -> Result<()> {
+fn confirm_fix(problem: &str, fix: &str, yes: bool) -> Result<()> {
     if yes {
         return Ok(());
     }
     if !std::io::stdin().is_terminal() {
         bail!("{problem}, and no terminal to confirm on, pass --yes to {fix}");
     }
-    if !prompt::confirm(&format!("{problem}, {fix}"), default)? {
+    if !prompt::confirm(&format!("{problem}, {fix}"), false)? {
         bail!("{problem}");
     }
     Ok(())
