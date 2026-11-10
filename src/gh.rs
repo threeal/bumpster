@@ -13,6 +13,27 @@ pub fn check_auth() -> Result<()> {
     run("gh", &["auth", "status"]).map(|_| ())
 }
 
+/// Returns the URL of the open pull request whose head is the given branch, or
+/// `None` if there is none.
+pub fn find_pull_request(branch: &str) -> Result<Option<String>> {
+    let url = run(
+        "gh",
+        &[
+            "pr",
+            "list",
+            "--head",
+            branch,
+            "--state",
+            "open",
+            "--json",
+            "url",
+            "--jq",
+            ".[0].url // empty",
+        ],
+    )?;
+    Ok(Some(url).filter(|url| !url.is_empty()))
+}
+
 /// Opens a pull request for the current branch against `main`, returning its
 /// URL.
 pub fn create_pull_request(title: &str, body: &str) -> Result<String> {
