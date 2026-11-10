@@ -59,7 +59,13 @@ pub fn commit(message: &str, paths: &[&str]) -> Result<()> {
     run("git", &args).map(|_| ())
 }
 
-/// Pushes the given branch to `origin` and sets it as the upstream.
+/// Pushes the given branch to `origin` and sets it as the upstream,
+/// overwriting the branch on `origin` only if it's still where this clone last
+/// saw it.
 pub fn push(branch: &str) -> Result<()> {
-    run("git", &["push", "-u", "origin", branch]).map(|_| ())
+    run(
+        "git",
+        &["push", "--force-with-lease", "-u", "origin", branch],
+    )
+    .map(|_| ())
 }
