@@ -13,8 +13,9 @@ fn main() {
     let yes_arg = || clap::arg!(-y --yes "Answer yes to every question, including discarding uncommitted changes");
     let matches = clap::Command::new("bumpster")
         .version(env!("CARGO_PKG_VERSION"))
-        .about("Bump the version of a tool in the current repository")
-        .subcommand_required(true)
+        .about("Bump the version of a tool, or every outdated one, in the current repository")
+        .args_conflicts_with_subcommands(true)
+        .arg(yes_arg())
         .subcommand(
             clap::Command::new("dprint")
                 .about("Bump a dprint plugin, or every outdated one, in the plugins field of dprint.json")
@@ -51,14 +52,21 @@ fn main() {
 
     let result = match matches.subcommand() {
         Some(("dprint", matches)) => matches.get_one::<String>("plugin").map_or_else(
-            || bump_outdated_dprint_plugins(yes(matches)),
+            || {
+                bumpster::dprint::prepare_outdated(yes(matches)).and_then(|bumps| {
+                    let bumps = bumps.into_iter().map(bumpster::all::Bump::Dprint);
+                    finish_all(bumps.collect(), "every plugin is up to date", yes(matches))
+                })
+            },
             |plugin| bump_dprint_plugin(plugin, matches),
         ),
         Some(("node", matches)) => bumpster::node::prepare(target(matches), yes(matches))
             .and_then(|bump| finish(&bump.change(), yes(matches), || bump.apply())),
         Some(("pnpm", matches)) => bumpster::pnpm::prepare(target(matches), yes(matches))
             .and_then(|bump| finish(&bump.change(), yes(matches), || bump.apply())),
-        _ => unreachable!("a subcommand is required"),
+        None => bumpster::all::prepare_outdated(yes(&matches))
+            .and_then(|bumps| finish_all(bumps, "everything is up to date", yes(&matches))),
+        Some((name, _)) => unreachable!("{name} is not a subcommand"),
     };
 
     if let Err(err) = result {
@@ -112,16 +120,19 @@ fn bump_dprint_plugin(plugin: &str, matches: &clap::ArgMatches) -> anyhow::Resul
         .and_then(|bump| finish(&bump.change(), yes(matches), || bump.apply()))
 }
 
-/// Bumps every dprint plugin that is behind its latest release, by showing the
-/// changes and, unless confirmation is skipped, asking once whether to go
-/// ahead, then applying them one after another from the main branch, showing
-/// the URL of each pull request as it goes and stopping at the first failure.
+/// Finishes the prepared bumps of everything that is outdated, by showing
+/// their changes and, unless confirmation is skipped, asking once whether to
+/// go ahead, then applying them one after another from the main branch,
+/// showing the URL of each pull request as it goes and stopping at the first
+/// failure.
+///
+/// If there are no bumps, it shows the given message saying everything is up
+/// to date instead.
 #[cfg(not(tarpaulin_include))]
-fn bump_outdated_dprint_plugins(yes: bool) -> anyhow::Result<()> {
-    let bumps = bumpster::dprint::prepare_outdated(yes)?;
+fn finish_all(bumps: Vec<bumpster::all::Bump>, up_to_date: &str, yes: bool) -> anyhow::Result<()> {
     let question = match bumps.len() {
         0 => {
-            println!("every plugin is up to date");
+            println!("{up_to_date}");
             return Ok(());
         }
         1 => "open a pull request".to_string(),

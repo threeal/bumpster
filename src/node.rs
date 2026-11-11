@@ -14,7 +14,7 @@ const PATHS: [&str; 2] = ["package.json", "pnpm-lock.yaml"];
 /// A bump of Node.js, prepared up to the edit of `package.json` that it makes.
 pub struct Bump {
     /// The version that Node.js is bumped to.
-    #[cfg_attr(tarpaulin_include, allow(dead_code))] // Read only by `apply`.
+    #[cfg_attr(tarpaulin_include, allow(dead_code))] // Read only by `apply` and `refresh`.
     version: String,
     /// The edit of `package.json`.
     edit: Edit,
@@ -49,8 +49,33 @@ pub fn prepare(target: Option<&str>, yes: bool) -> Result<Bump> {
         Some(target) => resolve_version(target)?,
         None => resolve_version(&current_major(&package_json)?)?,
     };
-    let edit = bump_package_json(&package_json, &version)?;
-    Ok(Bump { version, edit })
+    Bump::new(&package_json, version)
+}
+
+/// Finds whether Node.js in the given `package.json` file is behind the newest
+/// release of the major version it's already on, showing it if it's already
+/// up to date.
+///
+/// Returns a bump of it to that release, or `None` if it's up to date or if
+/// `devEngines.runtime` doesn't declare Node.js.
+///
+/// # Errors
+///
+/// Returns an error if `package.json` can't be parsed, if the files the bump
+/// edits don't exist, or if the version of Node.js can't be read or resolved.
+#[cfg(not(tarpaulin_include))] // Sends requests, so it is not unit tested.
+pub(crate) fn find_outdated(package_json: &str) -> Result<Option<Bump>> {
+    if !declares_node(package_json)? {
+        return Ok(None);
+    }
+    tool::check_paths(&PATHS)?;
+    let current = current_version(package_json)?;
+    let version = resolve_version(&current_major(package_json)?)?;
+    if tool::compare_versions(&version, &current).is_le() {
+        println!("Node.js is up to date at version {current}");
+        return Ok(None);
+    }
+    Bump::new(package_json, version).map(Some)
 }
 
 /// Resolves the target of a bump to the version to bump Node.js to, where the
@@ -75,6 +100,33 @@ fn resolve_version(target: &str) -> Result<String> {
 }
 
 impl Bump {
+    /// Prepares a bump of Node.js to the given version, editing the given
+    /// `package.json` file.
+    pub(crate) fn new(package_json: &str, version: String) -> Result<Self> {
+        let edit = bump_package_json(package_json, &version)?;
+        Ok(Self { version, edit })
+    }
+
+    /// Prepares the bump again from the latest main branch, editing
+    /// `package.json` as it is there, so a bump made after another one starts
+    /// from the main branch rather than the branch of the one before.
+    ///
+    /// If the repository is not on the main branch or its working tree is not
+    /// clean, it asks whether to switch to the main branch or discard the
+    /// changes first, unless `yes` is set.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the repository is not ready for the bump, or if
+    /// Node.js can no longer be bumped to the version.
+    #[cfg(not(tarpaulin_include))] // Runs commands, so it is not unit tested.
+    pub fn refresh(self, yes: bool) -> Result<Self> {
+        println!("checking that the repository is ready");
+        tool::prepare_repository(yes)?;
+        tool::check_paths(&PATHS)?;
+        Self::new(&tool::read("package.json")?, self.version)
+    }
+
     /// Returns the change that the bump makes, naming the field and file it
     /// edits along with the values it changes from and to.
     #[must_use]
@@ -130,11 +182,29 @@ fn bump_package_json(package_json: &str, version: &str) -> Result<Edit> {
     })
 }
 
+/// Returns whether the `devEngines.runtime` field of a `package.json` file
+/// declares Node.js, rather than another runtime or none.
+fn declares_node(package_json: &str) -> Result<bool> {
+    let value: serde_json::Value =
+        serde_json::from_str(package_json).context("failed to parse package.json")?;
+    Ok(value
+        .pointer("/devEngines/runtime/name")
+        .and_then(serde_json::Value::as_str)
+        == Some("node"))
+}
+
+/// Returns the version of Node.js in the `devEngines.runtime` field of a
+/// `package.json` file, such as `24.22.0` for `^24.22.0`.
+fn current_version(package_json: &str) -> Result<String> {
+    let range = read_range(package_json)?;
+    let (_, current) = split_simple_range(&range)?;
+    Ok(current.to_string())
+}
+
 /// Returns the major version of Node.js in the `devEngines.runtime` field of a
 /// `package.json` file, such as `24` for `^24.22.0`.
 fn current_major(package_json: &str) -> Result<String> {
-    let range = read_range(package_json)?;
-    let (_, current) = split_simple_range(&range)?;
+    let current = current_version(package_json)?;
     Ok(current.split('.').next().unwrap_or_default().to_string())
 }
 
@@ -253,10 +323,7 @@ mod tests {
 
     #[test]
     fn bump_change() {
-        let bump = Bump {
-            version: "24.22.1".to_string(),
-            edit: bump_package_json(&package_json("^24.22.0"), "24.22.1").unwrap(),
-        };
+        let bump = Bump::new(&package_json("^24.22.0"), "24.22.1".to_string()).unwrap();
         assert_eq!(
             bump.change(),
             "devEngines.runtime.version in package.json: ^24.22.0 -> ^24.22.1"
@@ -305,6 +372,36 @@ mod tests {
                     "devEngines.runtime.version in package.json is not a simple range: {range}"
                 )
             );
+        }
+    }
+
+    #[test]
+    fn declares_node_or_not() {
+        assert!(declares_node(&package_json("^24.22.0")).unwrap());
+        let cases = [
+            "{}",
+            r#"{ "devEngines": {} }"#,
+            r#"{ "devEngines": { "runtime": { "name": "bun", "version": "1.3.0" } } }"#,
+            r#"{ "devEngines": { "runtime": [{ "name": "node", "version": "24.22.0" }] } }"#,
+        ];
+        for package_json in cases {
+            assert!(!declares_node(package_json).unwrap(), "{package_json}");
+        }
+    }
+
+    #[test]
+    fn declares_node_invalid() {
+        assert_eq!(
+            declares_node("{").unwrap_err().to_string(),
+            "failed to parse package.json"
+        );
+    }
+
+    #[test]
+    fn current_version_valid() {
+        let cases = [("^24.22.0", "24.22.0"), ("~22.1", "22.1"), ("26", "26")];
+        for (range, version) in cases {
+            assert_eq!(current_version(&package_json(range)).unwrap(), version);
         }
     }
 
