@@ -1,5 +1,5 @@
 //! Bumping the version of dprint plugins pinned by their URLs in a
-//! `dprint.json` file.
+//! `dprint.json` file, either one plugin at a time or every outdated one.
 
 use crate::git;
 use crate::tool::{self, Edit, PullRequest, replace_once};
@@ -67,7 +67,7 @@ pub struct Bump<'a> {
     /// The plugin that is bumped.
     plugin: &'a Plugin,
     /// The version that the plugin is bumped to.
-    #[cfg_attr(tarpaulin_include, allow(dead_code))] // Read only by `apply`.
+    #[cfg_attr(tarpaulin_include, allow(dead_code))] // Read only by `apply` and `refresh`.
     version: String,
     /// The edit of `dprint.json`.
     edit: Edit,
@@ -101,15 +101,89 @@ pub fn prepare<'a>(plugin: &'a Plugin, target: Option<&str>, yes: bool) -> Resul
         |version| tool::check_release(plugin.name, plugin.repository, plugin.tag_prefix, version),
         |_| tool::latest_release(plugin.repository, plugin.tag_prefix),
     )?;
-    let edit = bump_url(&tool::read("dprint.json")?, &version, plugin)?;
-    Ok(Bump {
-        plugin,
-        version,
-        edit,
-    })
+    Bump::new(plugin, version)
+}
+
+/// Prepares a bump of every supported plugin in the `plugins` field of
+/// `dprint.json` that is behind its latest release, without changing anything
+/// yet.
+///
+/// It warns about each plugin that isn't supported, and shows each one that is
+/// already up to date.
+///
+/// If the repository is not on the main branch or its working tree is not
+/// clean, it asks whether to switch to the main branch or discard the changes
+/// first, unless `yes` is set.
+///
+/// Returns the bumps in the order their plugins appear in `dprint.json`, which
+/// is empty if every supported plugin is up to date.
+///
+/// # Errors
+///
+/// Returns an error if the repository is not ready for the bumps, or if the
+/// version of a plugin can't be read or its latest release can't be found.
+#[cfg(not(tarpaulin_include))] // Sends requests, so it is not unit tested.
+pub fn prepare_outdated(yes: bool) -> Result<Vec<Bump<'static>>> {
+    println!("checking that the repository is ready");
+    tool::prepare_repository(yes)?;
+    tool::check_paths(&["dprint.json"])?;
+    let dprint_json = tool::read("dprint.json")?;
+    let plugins = find_plugins(&dprint_json);
+    for url in plugins.unsupported {
+        println!("warning: {url} is not supported, skipping");
+    }
+
+    let mut bumps = Vec::new();
+    for plugin in plugins.supported {
+        let current = read_version(&dprint_json, plugin.url_prefix)?;
+        println!("finding the latest version of {}", plugin.name);
+        let version = tool::latest_release(plugin.repository, plugin.tag_prefix)?;
+        if tool::compare_versions(&version, current).is_le() {
+            println!("{} is up to date at version {current}", plugin.name);
+            continue;
+        }
+        let edit = bump_url(&dprint_json, &version, plugin)?;
+        bumps.push(Bump {
+            plugin,
+            version,
+            edit,
+        });
+    }
+    Ok(bumps)
 }
 
 impl Bump<'_> {
+    /// Prepares a bump of a plugin to the given version, editing
+    /// `dprint.json` as it is now.
+    #[cfg(not(tarpaulin_include))] // Reads a real file, so it is not unit tested.
+    fn new(plugin: &Plugin, version: String) -> Result<Bump<'_>> {
+        let edit = bump_url(&tool::read("dprint.json")?, &version, plugin)?;
+        Ok(Bump {
+            plugin,
+            version,
+            edit,
+        })
+    }
+
+    /// Prepares the bump again from the latest main branch, editing
+    /// `dprint.json` as it is there, so a bump made after another one starts
+    /// from the main branch rather than the branch of the one before.
+    ///
+    /// If the repository is not on the main branch or its working tree is not
+    /// clean, it asks whether to switch to the main branch or discard the
+    /// changes first, unless `yes` is set.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the repository is not ready for the bump, or if the
+    /// plugin can no longer be bumped to the version.
+    #[cfg(not(tarpaulin_include))] // Runs commands, so it is not unit tested.
+    pub fn refresh(self, yes: bool) -> Result<Self> {
+        println!("checking that the repository is ready");
+        tool::prepare_repository(yes)?;
+        Self::new(self.plugin, self.version)
+    }
+
     /// Returns the change that the bump makes, naming the plugin and file it
     /// edits along with the versions it changes from and to.
     #[must_use]
@@ -153,6 +227,43 @@ impl Bump<'_> {
             &self.version,
         )
     }
+}
+
+/// The plugins pinned in a `dprint.json` file, split by whether they are
+/// supported.
+struct FoundPlugins<'a> {
+    /// The supported plugins, in the order they appear.
+    supported: Vec<&'static Plugin>,
+    /// The URLs of the plugins that aren't supported, in the order they
+    /// appear.
+    unsupported: Vec<&'a str>,
+}
+
+/// Finds the plugins pinned in a `dprint.json` file, from every quoted
+/// `https://` URL of a `.wasm` file in it, reading it as text like the edits
+/// do, so comments don't need to be parsed.
+fn find_plugins(dprint_json: &str) -> FoundPlugins<'_> {
+    let mut found = FoundPlugins {
+        supported: Vec::new(),
+        unsupported: Vec::new(),
+    };
+    for (start, _) in dprint_json.match_indices("\"https://") {
+        let url = dprint_json[start + 1..]
+            .split('"')
+            .next()
+            .unwrap_or_default();
+        if !url.contains(".wasm") {
+            continue;
+        }
+        match PLUGINS
+            .iter()
+            .find(|(_, plugin)| url.starts_with(plugin.url_prefix))
+        {
+            Some((_, plugin)) => found.supported.push(plugin),
+            None => found.unsupported.push(url),
+        }
+    }
+    found
 }
 
 /// Returns the edit of a `dprint.json` file with the URL of the given plugin
@@ -259,6 +370,42 @@ mod tests {
                 .to_string(),
             "dprint-plugin-json is already at version 0.25.2, newer than 0.25.1"
         );
+    }
+
+    #[test]
+    fn find_supported_and_unsupported_plugins() {
+        let dprint_json = r#"{
+  // Plugins are pinned by "https://" URLs.
+  "$schema": "https://dprint.dev/schemas/v0.json",
+  "plugins": [
+    "https://plugins.dprint.dev/toml-0.9.0.wasm",
+    "https://plugins.dprint.dev/foo-1.0.0.wasm",
+    "https://plugins.dprint.dev/json-0.25.2.wasm",
+    "https://plugins.dprint.dev/g-plane/pretty_yaml-v0.6.0.wasm",
+    "https://example.com/bar.wasm@abc123"
+  ]
+}
+"#;
+        let found = find_plugins(dprint_json);
+        let names: Vec<_> = found.supported.iter().map(|plugin| plugin.name).collect();
+        assert_eq!(
+            names,
+            ["dprint-plugin-toml", "dprint-plugin-json", "pretty_yaml"]
+        );
+        assert_eq!(
+            found.unsupported,
+            [
+                "https://plugins.dprint.dev/foo-1.0.0.wasm",
+                "https://example.com/bar.wasm@abc123"
+            ]
+        );
+    }
+
+    #[test]
+    fn find_no_plugins() {
+        let found = find_plugins(r#"{ "plugins": [] }"#);
+        assert!(found.supported.is_empty());
+        assert!(found.unsupported.is_empty());
     }
 
     #[test]
