@@ -29,6 +29,25 @@ impl Field {
         bail!("neither devEngines.packageManager nor packageManager is set in package.json");
     }
 
+    /// Finds the field that declares pnpm in a parsed `package.json` file, as
+    /// [`Field::find`] does, or returns `None` if that field declares another
+    /// package manager or neither field is set.
+    fn find_pnpm(package_json: &serde_json::Value) -> Option<Self> {
+        let field = Self::find(package_json).ok()?;
+        let declares_pnpm = match field {
+            Self::DevEngines => {
+                package_json
+                    .pointer("/devEngines/packageManager/name")
+                    .and_then(serde_json::Value::as_str)
+                    == Some("pnpm")
+            }
+            Self::PackageManager => package_json["packageManager"]
+                .as_str()
+                .is_some_and(|value| value.starts_with("pnpm@")),
+        };
+        declares_pnpm.then_some(field)
+    }
+
     /// Returns the name of the field that holds the version.
     const fn name(&self) -> &'static str {
         match self {
@@ -52,7 +71,7 @@ pub const TAGS: [&str; 1] = ["latest"];
 /// A bump of pnpm, prepared up to the edit of `package.json` that it makes.
 pub struct Bump {
     /// The version that pnpm is bumped to.
-    #[cfg_attr(tarpaulin_include, allow(dead_code))] // Read only by `apply`.
+    #[cfg_attr(tarpaulin_include, allow(dead_code))] // Read only by `apply` and `refresh`.
     version: String,
     /// The edit of `package.json`.
     edit: Edit,
@@ -96,12 +115,34 @@ pub fn prepare(target: Option<&str>, yes: bool) -> Result<Bump> {
         Some(target) => resolve_version(target)?,
         None => resolve_version(&current_major(&value, &field)?)?,
     };
-    let edit = bump_package_json(&package_json, &value, &field, &version)?;
-    Ok(Bump {
-        version,
-        edit,
-        field,
-    })
+    Bump::new(&package_json, version)
+}
+
+/// Finds whether pnpm in the given `package.json` file is behind the newest
+/// release of the major version it's already on, showing it if it's already
+/// up to date.
+///
+/// Returns a bump of it to that release, or `None` if it's up to date or if
+/// pnpm isn't the package manager declared in `package.json`.
+///
+/// # Errors
+///
+/// Returns an error if `package.json` can't be parsed, if the files the bump
+/// edits don't exist, or if the version of pnpm can't be read or resolved.
+#[cfg(not(tarpaulin_include))] // Sends requests, so it is not unit tested.
+pub(crate) fn find_outdated(package_json: &str) -> Result<Option<Bump>> {
+    let value = parse_package_json(package_json)?;
+    let Some(field) = Field::find_pnpm(&value) else {
+        return Ok(None);
+    };
+    tool::check_paths(field.paths())?;
+    let current = current_version(&value, &field)?;
+    let version = resolve_version(&current_major(&value, &field)?)?;
+    if tool::compare_versions(&version, current).is_le() {
+        println!("pnpm is up to date at version {current}");
+        return Ok(None);
+    }
+    Bump::new(package_json, version).map(Some)
 }
 
 /// Resolves the target of a bump to the version to bump pnpm to, where the
@@ -126,6 +167,40 @@ fn resolve_version(target: &str) -> Result<String> {
 }
 
 impl Bump {
+    /// Prepares a bump of pnpm to the given version, editing the given
+    /// `package.json` file in the field that declares pnpm.
+    pub(crate) fn new(package_json: &str, version: String) -> Result<Self> {
+        let value = parse_package_json(package_json)?;
+        let field = Field::find(&value)?;
+        let edit = bump_package_json(package_json, &value, &field, &version)?;
+        Ok(Self {
+            version,
+            edit,
+            field,
+        })
+    }
+
+    /// Prepares the bump again from the latest main branch, editing
+    /// `package.json` as it is there, so a bump made after another one starts
+    /// from the main branch rather than the branch of the one before.
+    ///
+    /// If the repository is not on the main branch or its working tree is not
+    /// clean, it asks whether to switch to the main branch or discard the
+    /// changes first, unless `yes` is set.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the repository is not ready for the bump, or if
+    /// pnpm can no longer be bumped to the version.
+    #[cfg(not(tarpaulin_include))] // Runs commands, so it is not unit tested.
+    pub fn refresh(self, yes: bool) -> Result<Self> {
+        println!("checking that the repository is ready");
+        tool::prepare_repository(yes)?;
+        let bump = Self::new(&tool::read("package.json")?, self.version)?;
+        tool::check_paths(bump.field.paths())?;
+        Ok(bump)
+    }
+
     /// Returns the change that the bump makes, naming the field and file it
     /// edits along with the values it changes from and to.
     #[must_use]
@@ -211,16 +286,22 @@ fn bump_package_json(
     }
 }
 
+/// Returns the version of pnpm in the given field of a `package.json` file,
+/// parsed as `value`, such as `10.18.0` for `^10.18.0` or `pnpm@10.18.0`.
+fn current_version<'a>(value: &'a serde_json::Value, field: &Field) -> Result<&'a str> {
+    match field {
+        Field::DevEngines => {
+            let range = read_dev_engines_range(&value["devEngines"]["packageManager"])?;
+            Ok(split_dev_engines_range(range)?.1)
+        }
+        Field::PackageManager => read_package_manager_version(&value["packageManager"]),
+    }
+}
+
 /// Returns the major version of pnpm in the given field of a `package.json`
 /// file, parsed as `value`, such as `10` for `^10.18.0` or `pnpm@10.18.0`.
 fn current_major(value: &serde_json::Value, field: &Field) -> Result<String> {
-    let current = match field {
-        Field::DevEngines => {
-            let range = read_dev_engines_range(&value["devEngines"]["packageManager"])?;
-            split_dev_engines_range(range)?.1
-        }
-        Field::PackageManager => read_package_manager_version(&value["packageManager"])?,
-    };
+    let current = current_version(value, field)?;
     Ok(current.split('.').next().unwrap_or_default().to_string())
 }
 
@@ -474,10 +555,8 @@ mod tests {
     /// Bumps pnpm in a `package.json` file as `prepare` does, returning the
     /// edit along with the field it was bumped in.
     fn bump(package_json: &str, version: &str) -> Result<(Edit, Field)> {
-        let value = parse_package_json(package_json)?;
-        let field = Field::find(&value)?;
-        let edit = bump_package_json(package_json, &value, &field, version)?;
-        Ok((edit, field))
+        let bump = Bump::new(package_json, version.to_string())?;
+        Ok((bump.edit, bump.field))
     }
 
     fn dev_engines_package_json(range: &str) -> String {
@@ -527,12 +606,7 @@ mod tests {
             ),
         ];
         for (package_json, change) in package_jsons {
-            let (edit, field) = bump(&package_json, "12.15.0").unwrap();
-            let bump = Bump {
-                version: "12.15.0".to_string(),
-                edit,
-                field,
-            };
+            let bump = Bump::new(&package_json, "12.15.0".to_string()).unwrap();
             assert_eq!(bump.change(), change);
         }
     }
@@ -586,6 +660,48 @@ mod tests {
         let value = parse_package_json(package_json)?;
         let field = Field::find(&value)?;
         current_major(&value, &field)
+    }
+
+    #[test]
+    fn find_pnpm_field() {
+        let cases = [
+            (
+                dev_engines_package_json("^10.18.0"),
+                Some(Field::DevEngines),
+            ),
+            (
+                r#"{ "packageManager": "pnpm@10.18.0" }"#.to_string(),
+                Some(Field::PackageManager),
+            ),
+            ("{}".to_string(), None),
+            (
+                r#"{ "devEngines": { "packageManager": { "name": "yarn", "version": "4.0.0" } } }"#
+                    .to_string(),
+                None,
+            ),
+            (r#"{ "packageManager": "yarn@4.0.0" }"#.to_string(), None),
+            (r#"{ "packageManager": 10 }"#.to_string(), None),
+        ];
+        for (package_json, field) in cases {
+            let value = parse_package_json(&package_json).unwrap();
+            assert_eq!(Field::find_pnpm(&value), field, "{package_json}");
+        }
+    }
+
+    #[test]
+    fn current_version_valid() {
+        let cases = [
+            (dev_engines_package_json("^10.18.0"), "10.18.0"),
+            (
+                r#"{ "packageManager": "pnpm@10.18.0" }"#.to_string(),
+                "10.18.0",
+            ),
+        ];
+        for (package_json, version) in cases {
+            let value = parse_package_json(&package_json).unwrap();
+            let field = Field::find(&value).unwrap();
+            assert_eq!(current_version(&value, &field).unwrap(), version);
+        }
     }
 
     #[test]

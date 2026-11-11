@@ -1,5 +1,6 @@
 //! A library for bumping the version of a tool in a repository.
 
+pub mod all;
 mod command;
 pub mod dprint;
 mod gh;

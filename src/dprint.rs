@@ -101,7 +101,7 @@ pub fn prepare<'a>(plugin: &'a Plugin, target: Option<&str>, yes: bool) -> Resul
         |version| tool::check_release(plugin.name, plugin.repository, plugin.tag_prefix, version),
         |_| tool::latest_release(plugin.repository, plugin.tag_prefix),
     )?;
-    Bump::new(plugin, version)
+    Bump::new(plugin, &tool::read("dprint.json")?, version)
 }
 
 /// Prepares a bump of every supported plugin in the `plugins` field of
@@ -127,37 +127,50 @@ pub fn prepare_outdated(yes: bool) -> Result<Vec<Bump<'static>>> {
     println!("checking that the repository is ready");
     tool::prepare_repository(yes)?;
     tool::check_paths(&["dprint.json"])?;
-    let dprint_json = tool::read("dprint.json")?;
-    let plugins = find_plugins(&dprint_json);
+    find_outdated(&tool::read("dprint.json")?)
+}
+
+/// Finds every supported plugin in the given `dprint.json` file that is behind
+/// its latest release, warning about each plugin that isn't supported and
+/// showing each one that is already up to date.
+///
+/// Returns a bump for each of them, in the order their plugins appear in the
+/// file.
+///
+/// # Errors
+///
+/// Returns an error if the version of a plugin can't be read or its latest
+/// release can't be found.
+#[cfg(not(tarpaulin_include))] // Sends requests, so it is not unit tested.
+pub(crate) fn find_outdated(dprint_json: &str) -> Result<Vec<Bump<'static>>> {
+    let plugins = find_plugins(dprint_json);
     for url in plugins.unsupported {
         println!("warning: {url} is not supported, skipping");
     }
 
     let mut bumps = Vec::new();
     for plugin in plugins.supported {
-        let current = read_version(&dprint_json, plugin.url_prefix)?;
+        let current = read_version(dprint_json, plugin.url_prefix)?;
         println!("finding the latest version of {}", plugin.name);
         let version = tool::latest_release(plugin.repository, plugin.tag_prefix)?;
         if tool::compare_versions(&version, current).is_le() {
             println!("{} is up to date at version {current}", plugin.name);
             continue;
         }
-        let edit = bump_url(&dprint_json, &version, plugin)?;
-        bumps.push(Bump {
-            plugin,
-            version,
-            edit,
-        });
+        bumps.push(Bump::new(plugin, dprint_json, version)?);
     }
     Ok(bumps)
 }
 
 impl Bump<'_> {
-    /// Prepares a bump of a plugin to the given version, editing
-    /// `dprint.json` as it is now.
-    #[cfg(not(tarpaulin_include))] // Reads a real file, so it is not unit tested.
-    fn new(plugin: &Plugin, version: String) -> Result<Bump<'_>> {
-        let edit = bump_url(&tool::read("dprint.json")?, &version, plugin)?;
+    /// Prepares a bump of a plugin to the given version, editing the given
+    /// `dprint.json` file.
+    pub(crate) fn new<'p>(
+        plugin: &'p Plugin,
+        dprint_json: &str,
+        version: String,
+    ) -> Result<Bump<'p>> {
+        let edit = bump_url(dprint_json, &version, plugin)?;
         Ok(Bump {
             plugin,
             version,
@@ -181,7 +194,7 @@ impl Bump<'_> {
     pub fn refresh(self, yes: bool) -> Result<Self> {
         println!("checking that the repository is ready");
         tool::prepare_repository(yes)?;
-        Self::new(self.plugin, self.version)
+        Self::new(self.plugin, &tool::read("dprint.json")?, self.version)
     }
 
     /// Returns the change that the bump makes, naming the plugin and file it
@@ -341,11 +354,7 @@ mod tests {
     #[test]
     fn bump_change() {
         let (_, plugin) = &PLUGINS[0];
-        let bump = Bump {
-            plugin,
-            version: "0.25.3".to_string(),
-            edit: bump_url(DPRINT_JSON, "0.25.3", plugin).unwrap(),
-        };
+        let bump = Bump::new(plugin, DPRINT_JSON, "0.25.3".to_string()).unwrap();
         assert_eq!(
             bump.change(),
             "dprint-plugin-json in dprint.json: 0.25.2 -> 0.25.3"

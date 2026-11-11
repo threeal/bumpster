@@ -212,6 +212,17 @@ pub fn read(path: &str) -> Result<String> {
     std::fs::read_to_string(path).with_context(|| format!("failed to read {path}"))
 }
 
+/// Reads the content of a file to edit if it exists, showing that it's read,
+/// or returns `None` without showing anything if it doesn't.
+#[cfg(not(tarpaulin_include))] // Reads a real file, so it is not unit tested.
+pub fn read_if_exists(path: &str) -> Result<Option<String>> {
+    if !std::path::Path::new(path).exists() {
+        return Ok(None);
+    }
+    println!("reading {path}");
+    read(path).map(Some)
+}
+
 /// Writes the edited content of a file.
 #[cfg(not(tarpaulin_include))] // Writes a real file, so it is not unit tested.
 pub fn write(path: &str, content: &str) -> Result<()> {
