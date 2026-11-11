@@ -17,8 +17,8 @@ fn main() {
         .subcommand_required(true)
         .subcommand(
             clap::Command::new("dprint")
-                .about("Bump a dprint plugin in the plugins field of dprint.json")
-                .arg(clap::arg!(<plugin> "The plugin to bump").value_parser(
+                .about("Bump a dprint plugin, or every outdated one, in the plugins field of dprint.json")
+                .arg(clap::arg!([plugin] "The plugin to bump. If not given, bumps every plugin in dprint.json that is behind its latest release").value_parser(
                     clap::builder::PossibleValuesParser::new(
                         bumpster::dprint::PLUGINS.iter().map(|(plugin, _)| *plugin),
                     ),
@@ -50,17 +50,10 @@ fn main() {
         .get_matches();
 
     let result = match matches.subcommand() {
-        Some(("dprint", matches)) => {
-            let plugin = matches
-                .get_one::<String>("plugin")
-                .map_or("", String::as_str);
-            let (_, plugin) = bumpster::dprint::PLUGINS
-                .iter()
-                .find(|(name, _)| *name == plugin)
-                .expect("the plugin is validated by clap");
-            bumpster::dprint::prepare(plugin, target(matches), yes(matches))
-                .and_then(|bump| finish(&bump.change(), yes(matches), || bump.apply()))
-        }
+        Some(("dprint", matches)) => matches.get_one::<String>("plugin").map_or_else(
+            || bump_outdated_dprint_plugins(yes(matches)),
+            |plugin| bump_dprint_plugin(plugin, matches),
+        ),
         Some(("node", matches)) => bumpster::node::prepare(target(matches), yes(matches))
             .and_then(|bump| finish(&bump.change(), yes(matches), || bump.apply())),
         Some(("pnpm", matches)) => bumpster::pnpm::prepare(target(matches), yes(matches))
@@ -99,22 +92,78 @@ fn finish(
     apply: impl FnOnce() -> anyhow::Result<bumpster::PullRequest>,
 ) -> anyhow::Result<()> {
     println!("will update {change}");
-    if !yes {
-        if !std::io::stdin().is_terminal() {
-            anyhow::bail!(
-                "no terminal to confirm the bump on, pass --yes to make it without confirming"
-            );
-        }
-        if !bumpster::prompt::confirm("open a pull request", true)? {
-            println!("aborted");
+    if !confirm("open a pull request", yes)? {
+        println!("aborted");
+        return Ok(());
+    }
+    show(&apply()?);
+    Ok(())
+}
+
+/// Bumps the dprint plugin with the given short name to the target given in
+/// the arguments.
+#[cfg(not(tarpaulin_include))]
+fn bump_dprint_plugin(plugin: &str, matches: &clap::ArgMatches) -> anyhow::Result<()> {
+    let (_, plugin) = bumpster::dprint::PLUGINS
+        .iter()
+        .find(|(name, _)| *name == plugin)
+        .expect("the plugin is validated by clap");
+    bumpster::dprint::prepare(plugin, target(matches), yes(matches))
+        .and_then(|bump| finish(&bump.change(), yes(matches), || bump.apply()))
+}
+
+/// Bumps every dprint plugin that is behind its latest release, by showing the
+/// changes and, unless confirmation is skipped, asking once whether to go
+/// ahead, then applying them one after another from the main branch, showing
+/// the URL of each pull request as it goes and stopping at the first failure.
+#[cfg(not(tarpaulin_include))]
+fn bump_outdated_dprint_plugins(yes: bool) -> anyhow::Result<()> {
+    let bumps = bumpster::dprint::prepare_outdated(yes)?;
+    let question = match bumps.len() {
+        0 => {
+            println!("every plugin is up to date");
             return Ok(());
         }
+        1 => "open a pull request".to_string(),
+        count => format!("open {count} pull requests"),
+    };
+    for bump in &bumps {
+        println!("will update {}", bump.change());
     }
-    let pull_request = apply()?;
+    if !confirm(&question, yes)? {
+        println!("aborted");
+        return Ok(());
+    }
+    for bump in bumps {
+        show(&bump.refresh(yes)?.apply()?);
+    }
+    Ok(())
+}
+
+/// Confirms going ahead with the bump by asking the given question with yes as
+/// the default answer, unless confirmation is skipped.
+///
+/// Returns an error if there's no terminal to ask on.
+#[cfg(not(tarpaulin_include))]
+fn confirm(question: &str, yes: bool) -> anyhow::Result<bool> {
+    if yes {
+        return Ok(true);
+    }
+    if !std::io::stdin().is_terminal() {
+        anyhow::bail!(
+            "no terminal to confirm the bump on, pass --yes to make it without confirming"
+        );
+    }
+    bumpster::prompt::confirm(question, true)
+}
+
+/// Shows the URL of the pull request of a bump, saying whether it was opened
+/// or an already open one was updated.
+#[cfg(not(tarpaulin_include))]
+fn show(pull_request: &bumpster::PullRequest) {
     if pull_request.opened {
         println!("opened {}", pull_request.url);
     } else {
         println!("updated {}", pull_request.url);
     }
-    Ok(())
 }
