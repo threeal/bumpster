@@ -83,13 +83,20 @@ pub struct Bump<'a> {
 /// clean, it asks whether to switch to the main branch or discard the changes
 /// first, unless `yes` is set.
 ///
+/// Returns `None`, showing that the plugin is up to date, if it's already at
+/// the version the target resolves to.
+///
 /// # Errors
 ///
 /// Returns an error if the repository is not ready for the bump, if the
 /// target is not a released version or a known tag, or if the plugin can't be
-/// bumped to it.
+/// bumped to it, such as when it's already at a newer version.
 #[cfg(not(tarpaulin_include))] // Sends requests, so it is not unit tested.
-pub fn prepare<'a>(plugin: &'a Plugin, target: Option<&str>, yes: bool) -> Result<Bump<'a>> {
+pub fn prepare<'a>(
+    plugin: &'a Plugin,
+    target: Option<&str>,
+    yes: bool,
+) -> Result<Option<Bump<'a>>> {
     println!("checking that the repository is ready");
     tool::prepare_repository(yes)?;
     tool::check_paths(&["dprint.json"])?;
@@ -101,7 +108,13 @@ pub fn prepare<'a>(plugin: &'a Plugin, target: Option<&str>, yes: bool) -> Resul
         |version| tool::check_release(plugin.name, plugin.repository, plugin.tag_prefix, version),
         |_| tool::latest_release(plugin.repository, plugin.tag_prefix),
     )?;
-    Bump::new(plugin, &tool::read("dprint.json")?, version)
+    let dprint_json = tool::read("dprint.json")?;
+    let current = read_version(&dprint_json, plugin.url_prefix)?;
+    if tool::compare_versions(&version, current).is_eq() {
+        println!("{} is up to date at version {current}", plugin.name);
+        return Ok(None);
+    }
+    Bump::new(plugin, &dprint_json, version).map(Some)
 }
 
 /// Prepares a bump of every supported plugin in the `plugins` field of

@@ -34,13 +34,16 @@ pub struct Bump {
 /// clean, it asks whether to switch to the main branch or discard the changes
 /// first, unless `yes` is set.
 ///
+/// Returns `None`, showing that Node.js is up to date, if it's already at the
+/// version the target resolves to.
+///
 /// # Errors
 ///
 /// Returns an error if the repository is not ready for the bump, if the
 /// target is not a released version or a known tag, or if Node.js can't be
-/// bumped to it.
+/// bumped to it, such as when it's already at a newer version.
 #[cfg(not(tarpaulin_include))] // Sends requests, so it is not unit tested.
-pub fn prepare(target: Option<&str>, yes: bool) -> Result<Bump> {
+pub fn prepare(target: Option<&str>, yes: bool) -> Result<Option<Bump>> {
     println!("checking that the repository is ready");
     tool::prepare_repository(yes)?;
     tool::check_paths(&PATHS)?;
@@ -49,7 +52,12 @@ pub fn prepare(target: Option<&str>, yes: bool) -> Result<Bump> {
         Some(target) => resolve_version(target)?,
         None => resolve_version(&current_major(&package_json)?)?,
     };
-    Bump::new(&package_json, version)
+    let current = current_version(&package_json)?;
+    if tool::compare_versions(&version, &current).is_eq() {
+        println!("Node.js is up to date at version {current}");
+        return Ok(None);
+    }
+    Bump::new(&package_json, version).map(Some)
 }
 
 /// Finds whether Node.js in the given `package.json` file is behind the newest

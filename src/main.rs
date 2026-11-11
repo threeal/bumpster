@@ -50,24 +50,33 @@ fn main() {
         )
         .get_matches();
 
-    let result = match matches.subcommand() {
-        Some(("dprint", matches)) => matches.get_one::<String>("plugin").map_or_else(
-            || {
-                bumpster::dprint::prepare_outdated(yes(matches)).and_then(|bumps| {
-                    let bumps = bumps.into_iter().map(bumpster::all::Bump::Dprint);
-                    finish_all(bumps.collect(), "every plugin is up to date", yes(matches))
-                })
-            },
-            |plugin| bump_dprint_plugin(plugin, matches),
-        ),
-        Some(("node", matches)) => bumpster::node::prepare(target(matches), yes(matches))
-            .and_then(|bump| finish(&bump.change(), yes(matches), || bump.apply())),
-        Some(("pnpm", matches)) => bumpster::pnpm::prepare(target(matches), yes(matches))
-            .and_then(|bump| finish(&bump.change(), yes(matches), || bump.apply())),
-        None => bumpster::all::prepare_outdated(yes(&matches))
-            .and_then(|bumps| finish_all(bumps, "everything is up to date", yes(&matches))),
-        Some((name, _)) => unreachable!("{name} is not a subcommand"),
-    };
+    let result =
+        match matches.subcommand() {
+            Some(("dprint", matches)) => matches.get_one::<String>("plugin").map_or_else(
+                || {
+                    bumpster::dprint::prepare_outdated(yes(matches)).and_then(|bumps| {
+                        let bumps = bumps.into_iter().map(bumpster::all::Bump::Dprint);
+                        finish_all(bumps.collect(), "every plugin is up to date", yes(matches))
+                    })
+                },
+                |plugin| bump_dprint_plugin(plugin, matches),
+            ),
+            Some(("node", matches)) => bumpster::node::prepare(target(matches), yes(matches))
+                .and_then(|bump| {
+                    bump.map_or(Ok(()), |bump| {
+                        finish(&bump.change(), yes(matches), || bump.apply())
+                    })
+                }),
+            Some(("pnpm", matches)) => bumpster::pnpm::prepare(target(matches), yes(matches))
+                .and_then(|bump| {
+                    bump.map_or(Ok(()), |bump| {
+                        finish(&bump.change(), yes(matches), || bump.apply())
+                    })
+                }),
+            None => bumpster::all::prepare_outdated(yes(&matches))
+                .and_then(|bumps| finish_all(bumps, "everything is up to date", yes(&matches))),
+            Some((name, _)) => unreachable!("{name} is not a subcommand"),
+        };
 
     if let Err(err) = result {
         eprintln!("error: {err:#}");
@@ -116,8 +125,11 @@ fn bump_dprint_plugin(plugin: &str, matches: &clap::ArgMatches) -> anyhow::Resul
         .iter()
         .find(|(name, _)| *name == plugin)
         .expect("the plugin is validated by clap");
-    bumpster::dprint::prepare(plugin, target(matches), yes(matches))
-        .and_then(|bump| finish(&bump.change(), yes(matches), || bump.apply()))
+    bumpster::dprint::prepare(plugin, target(matches), yes(matches)).and_then(|bump| {
+        bump.map_or(Ok(()), |bump| {
+            finish(&bump.change(), yes(matches), || bump.apply())
+        })
+    })
 }
 
 /// Finishes the prepared bumps of everything that is outdated, by showing
