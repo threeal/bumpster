@@ -8,9 +8,6 @@ use anyhow::{Context, Result, bail};
 /// The tags that Node.js can be bumped to instead of a version.
 pub const TAGS: [&str; 2] = ["lts", "latest"];
 
-/// The files that a bump of Node.js edits.
-const PATHS: [&str; 2] = ["package.json", "pnpm-lock.yaml"];
-
 /// A bump of Node.js, prepared up to the edit of `package.json` that it makes.
 pub struct Bump {
     /// The version that Node.js is bumped to.
@@ -46,7 +43,7 @@ pub struct Bump {
 pub fn prepare(target: Option<&str>, yes: bool) -> Result<Option<Bump>> {
     println!("checking that the repository is ready");
     tool::prepare_repository(yes)?;
-    tool::check_paths(&PATHS)?;
+    tool::check_paths(&["package.json"])?;
     let package_json = tool::read("package.json")?;
     let version = match target {
         Some(target) => resolve_version(target)?,
@@ -69,14 +66,13 @@ pub fn prepare(target: Option<&str>, yes: bool) -> Result<Option<Bump>> {
 ///
 /// # Errors
 ///
-/// Returns an error if `package.json` can't be parsed, if the files the bump
-/// edits don't exist, or if the version of Node.js can't be read or resolved.
+/// Returns an error if `package.json` can't be parsed, or if the version of
+/// Node.js can't be read or resolved.
 #[cfg(not(tarpaulin_include))] // Sends requests, so it is not unit tested.
 pub(crate) fn find_outdated(package_json: &str) -> Result<Option<Bump>> {
     if !declares_node(package_json)? {
         return Ok(None);
     }
-    tool::check_paths(&PATHS)?;
     let current = current_version(package_json)?;
     let version = resolve_version(&current_major(package_json)?)?;
     if tool::compare_versions(&version, &current).is_le() {
@@ -131,7 +127,7 @@ impl Bump {
     pub fn refresh(self, yes: bool) -> Result<Self> {
         println!("checking that the repository is ready");
         tool::prepare_repository(yes)?;
-        tool::check_paths(&PATHS)?;
+        tool::check_paths(&["package.json"])?;
         Self::new(&tool::read("package.json")?, self.version)
     }
 
@@ -145,9 +141,10 @@ impl Bump {
         )
     }
 
-    /// Applies the bump, with `pnpm-lock.yaml` updated to match, then commits
-    /// the change to a new branch, pushes it, and opens a pull request for it,
-    /// or updates the one already open.
+    /// Applies the bump, with `pnpm-lock.yaml` updated to match if it exists,
+    /// since pnpm records the runtime in it, then commits the change to a new
+    /// branch, pushes it, and opens a pull request for it, or updates the one
+    /// already open.
     ///
     /// Returns the pull request, which is the one already open for the bump if
     /// there is one.
@@ -162,10 +159,15 @@ impl Bump {
         git::create_branch(&branch)?;
         println!("updating {}", self.change());
         tool::write("package.json", &self.edit.content)?;
-        println!("updating pnpm-lock.yaml (pnpm install --lockfile-only)");
-        command::run("pnpm", &["install", "--lockfile-only"])?;
-        println!("committing {}", PATHS.join(" and "));
-        git::commit(&tool::commit_message("Node.js", &self.version), &PATHS)?;
+        let paths: &[&str] = if std::path::Path::new("pnpm-lock.yaml").exists() {
+            println!("updating pnpm-lock.yaml (pnpm install --lockfile-only)");
+            command::run("pnpm", &["install", "--lockfile-only"])?;
+            &["package.json", "pnpm-lock.yaml"]
+        } else {
+            &["package.json"]
+        };
+        println!("committing {}", paths.join(" and "));
+        git::commit(&tool::commit_message("Node.js", &self.version), paths)?;
         println!("pushing {branch} to origin");
         git::push(&branch)?;
 
