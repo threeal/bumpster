@@ -5,13 +5,16 @@ use anyhow::{Context, Result, bail};
 use std::cmp::Ordering;
 use std::io::IsTerminal;
 
-/// Prepares the current repository for a bump, by getting it onto the main
-/// branch with a clean working tree, switching to the main branch and
-/// discarding its changes after asking unless `yes` is set, then checking that
-/// `gh` is logged in to open the pull request, then pulling the main branch
-/// from `origin` so the bump starts from its latest commit.
+/// Prepares the current repository for a bump, by first checking that `gh` is
+/// logged in to open the pull request, so nothing is discarded for a bump that
+/// can't be made, then getting it onto the main branch with a clean working
+/// tree, switching to the main branch and discarding its changes after asking
+/// unless `yes` is set, then pulling the main branch from `origin` so the bump
+/// starts from its latest commit.
 #[cfg(not(tarpaulin_include))] // Runs commands, so it is not unit tested.
 pub fn prepare_repository(yes: bool) -> Result<()> {
+    gh::check_auth()?;
+
     let on_main = git::current_branch()? == "main";
     let changes = git::changes()?;
     match (on_main, changes.is_empty()) {
@@ -39,7 +42,6 @@ pub fn prepare_repository(yes: bool) -> Result<()> {
             git::discard_changes()?;
         }
     }
-    gh::check_auth()?;
 
     println!("pulling the main branch from origin");
     git::pull("main")?;
