@@ -339,7 +339,8 @@ fn split_dev_engines_range(range: &str) -> Result<(&str, &str)> {
 #[cfg(not(tarpaulin_include))] // Sends a request, so it is not unit tested.
 fn fetch_registry() -> Result<String> {
     let url = "https://registry.npmjs.org/pnpm";
-    ureq::get(url)
+    tool::http_agent()
+        .get(url)
         .header("Accept", "application/vnd.npm.install-v1+json")
         .call()
         .and_then(|mut response| response.body_mut().read_to_string())
