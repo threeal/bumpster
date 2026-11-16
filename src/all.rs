@@ -21,9 +21,9 @@ pub enum Bump {
 ///
 /// Tools the repository doesn't use are skipped without showing anything.
 ///
-/// If the repository is not on the main branch or its working tree is not
-/// clean, it asks whether to switch to the main branch or discard the changes
-/// first, unless `yes` is set.
+/// If the repository is not on its default branch or its working tree is not
+/// clean, it asks whether to switch to the default branch or discard the
+/// changes first, unless `yes` is set.
 ///
 /// Returns the bumps of dprint plugins, Node.js, then pnpm, which is empty if
 /// every tool is up to date.
@@ -36,15 +36,15 @@ pub enum Bump {
 #[cfg(not(tarpaulin_include))] // Sends requests, so it is not unit tested.
 pub fn prepare_outdated(yes: bool) -> Result<Vec<Bump>> {
     println!("checking that the repository is ready");
-    tool::prepare_repository(yes)?;
+    let base = tool::prepare_repository(yes)?;
     let mut bumps = Vec::new();
     if let Some(dprint_json) = tool::read_if_exists("dprint.json")? {
-        let outdated = dprint::find_outdated(&dprint_json)?;
+        let outdated = dprint::find_outdated(&dprint_json, &base)?;
         bumps.extend(outdated.into_iter().map(Bump::Dprint));
     }
     if let Some(package_json) = tool::read_if_exists("package.json")? {
-        bumps.extend(node::find_outdated(&package_json)?.map(Bump::Node));
-        bumps.extend(pnpm::find_outdated(&package_json)?.map(Bump::Pnpm));
+        bumps.extend(node::find_outdated(&package_json, &base)?.map(Bump::Node));
+        bumps.extend(pnpm::find_outdated(&package_json, &base)?.map(Bump::Pnpm));
     }
     Ok(bumps)
 }
@@ -60,8 +60,8 @@ impl Bump {
         }
     }
 
-    /// Prepares the bump again from the latest main branch, as the bump of its
-    /// tool does.
+    /// Prepares the bump again from the latest default branch, as the bump of
+    /// its tool does.
     ///
     /// # Errors
     ///
@@ -106,15 +106,29 @@ mod tests {
 }"#;
         let cases = [
             (
-                Bump::Dprint(dprint::Bump::new(plugin, dprint_json, "0.10.0".to_string()).unwrap()),
+                Bump::Dprint(
+                    dprint::Bump::new(
+                        plugin,
+                        dprint_json,
+                        "0.10.0".to_string(),
+                        "main".to_string(),
+                    )
+                    .unwrap(),
+                ),
                 "dprint-plugin-toml in dprint.json: 0.9.0 -> 0.10.0",
             ),
             (
-                Bump::Node(node::Bump::new(package_json, "24.12.0".to_string()).unwrap()),
+                Bump::Node(
+                    node::Bump::new(package_json, "24.12.0".to_string(), "main".to_string())
+                        .unwrap(),
+                ),
                 "devEngines.runtime.version in package.json: ^24.11.0 -> ^24.12.0",
             ),
             (
-                Bump::Pnpm(pnpm::Bump::new(package_json, "10.19.0".to_string()).unwrap()),
+                Bump::Pnpm(
+                    pnpm::Bump::new(package_json, "10.19.0".to_string(), "main".to_string())
+                        .unwrap(),
+                ),
                 "devEngines.packageManager.version in package.json: ^10.18.0 -> ^10.19.0",
             ),
         ];

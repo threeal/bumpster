@@ -77,6 +77,9 @@ pub struct Bump {
     edit: Edit,
     /// The field of `package.json` that the edit bumps pnpm in.
     field: Field,
+    /// The default branch that the bump's pull request targets.
+    #[cfg_attr(tarpaulin_include, allow(dead_code))] // Read only by `apply`.
+    base: String,
 }
 
 /// Prepares a bump of pnpm in `package.json` to the given target, which is
@@ -94,9 +97,9 @@ pub struct Bump {
 /// pnpm is bumped in the `devEngines.packageManager` field, or in the
 /// `packageManager` field if the former is not set.
 ///
-/// If the repository is not on the main branch or its working tree is not
-/// clean, it asks whether to switch to the main branch or discard the changes
-/// first, unless `yes` is set.
+/// If the repository is not on its default branch or its working tree is not
+/// clean, it asks whether to switch to the default branch or discard the
+/// changes first, unless `yes` is set.
 ///
 /// Returns `None`, showing that pnpm is up to date, if it's already at the
 /// version the target resolves to.
@@ -109,7 +112,7 @@ pub struct Bump {
 #[cfg(not(tarpaulin_include))] // Sends requests, so it is not unit tested.
 pub fn prepare(target: Option<&str>, yes: bool) -> Result<Option<Bump>> {
     println!("checking that the repository is ready");
-    tool::prepare_repository(yes)?;
+    let base = tool::prepare_repository(yes)?;
     let package_json = tool::read("package.json")?;
     let value = parse_package_json(&package_json)?;
     let field = Field::find(&value)?;
@@ -123,22 +126,23 @@ pub fn prepare(target: Option<&str>, yes: bool) -> Result<Option<Bump>> {
         println!("pnpm is up to date at version {current}");
         return Ok(None);
     }
-    Bump::new(&package_json, version).map(Some)
+    Bump::new(&package_json, version, base).map(Some)
 }
 
 /// Finds whether pnpm in the given `package.json` file is behind the newest
 /// release of the major version it's already on, showing it if it's already
 /// up to date.
 ///
-/// Returns a bump of it to that release, or `None` if it's up to date or if
-/// pnpm isn't the package manager declared in `package.json`.
+/// Returns a bump of it to that release, with a pull request against the given
+/// base branch, or `None` if it's up to date or if pnpm isn't the package
+/// manager declared in `package.json`.
 ///
 /// # Errors
 ///
 /// Returns an error if `package.json` can't be parsed, if the files the bump
 /// edits don't exist, or if the version of pnpm can't be read or resolved.
 #[cfg(not(tarpaulin_include))] // Sends requests, so it is not unit tested.
-pub(crate) fn find_outdated(package_json: &str) -> Result<Option<Bump>> {
+pub(crate) fn find_outdated(package_json: &str, base: &str) -> Result<Option<Bump>> {
     let value = parse_package_json(package_json)?;
     let Some(field) = Field::find_pnpm(&value) else {
         return Ok(None);
@@ -150,7 +154,7 @@ pub(crate) fn find_outdated(package_json: &str) -> Result<Option<Bump>> {
         println!("pnpm is up to date at version {current}");
         return Ok(None);
     }
-    Bump::new(package_json, version).map(Some)
+    Bump::new(package_json, version, base.to_string()).map(Some)
 }
 
 /// Resolves the target of a bump to the version to bump pnpm to, where the
@@ -176,8 +180,9 @@ fn resolve_version(target: &str) -> Result<String> {
 
 impl Bump {
     /// Prepares a bump of pnpm to the given version, editing the given
-    /// `package.json` file in the field that declares pnpm.
-    pub(crate) fn new(package_json: &str, version: String) -> Result<Self> {
+    /// `package.json` file in the field that declares pnpm, with a pull
+    /// request against the given base branch.
+    pub(crate) fn new(package_json: &str, version: String, base: String) -> Result<Self> {
         let value = parse_package_json(package_json)?;
         let field = Field::find(&value)?;
         let edit = bump_package_json(package_json, &value, &field, &version)?;
@@ -185,16 +190,17 @@ impl Bump {
             version,
             edit,
             field,
+            base,
         })
     }
 
-    /// Prepares the bump again from the latest main branch, editing
+    /// Prepares the bump again from the latest default branch, editing
     /// `package.json` as it is there, so a bump made after another one starts
-    /// from the main branch rather than the branch of the one before.
+    /// from the default branch rather than the branch of the one before.
     ///
-    /// If the repository is not on the main branch or its working tree is not
-    /// clean, it asks whether to switch to the main branch or discard the
-    /// changes first, unless `yes` is set.
+    /// If the repository is not on its default branch or its working tree is
+    /// not clean, it asks whether to switch to the default branch or discard
+    /// the changes first, unless `yes` is set.
     ///
     /// # Errors
     ///
@@ -203,8 +209,8 @@ impl Bump {
     #[cfg(not(tarpaulin_include))] // Runs commands, so it is not unit tested.
     pub fn refresh(self, yes: bool) -> Result<Self> {
         println!("checking that the repository is ready");
-        tool::prepare_repository(yes)?;
-        let bump = Self::new(&tool::read("package.json")?, self.version)?;
+        let base = tool::prepare_repository(yes)?;
+        let bump = Self::new(&tool::read("package.json")?, self.version, base)?;
         tool::check_paths(bump.field.paths())?;
         Ok(bump)
     }
@@ -249,7 +255,14 @@ impl Bump {
         println!("pushing {branch} to origin");
         git::push(&branch)?;
 
-        tool::open_or_update_pull_request(&branch, "pnpm", "pnpm/pnpm", "v", &self.version)
+        tool::open_or_update_pull_request(
+            &branch,
+            &self.base,
+            "pnpm",
+            "pnpm/pnpm",
+            "v",
+            &self.version,
+        )
     }
 }
 
@@ -563,7 +576,7 @@ mod tests {
     /// Bumps pnpm in a `package.json` file as `prepare` does, returning the
     /// edit along with the field it was bumped in.
     fn bump(package_json: &str, version: &str) -> Result<(Edit, Field)> {
-        let bump = Bump::new(package_json, version.to_string())?;
+        let bump = Bump::new(package_json, version.to_string(), "main".to_string())?;
         Ok((bump.edit, bump.field))
     }
 
@@ -614,7 +627,7 @@ mod tests {
             ),
         ];
         for (package_json, change) in package_jsons {
-            let bump = Bump::new(&package_json, "12.15.0".to_string()).unwrap();
+            let bump = Bump::new(&package_json, "12.15.0".to_string(), "main".to_string()).unwrap();
             assert_eq!(bump.change(), change);
         }
     }

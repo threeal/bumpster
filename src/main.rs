@@ -134,7 +134,7 @@ fn bump_dprint_plugin(plugin: &str, matches: &clap::ArgMatches) -> anyhow::Resul
 
 /// Finishes the prepared bumps of everything that is outdated, by showing
 /// their changes and, unless confirmation is skipped, asking once whether to
-/// go ahead, then applying them one after another from the main branch,
+/// go ahead, then applying them one after another from the default branch,
 /// showing the URL of each pull request as it goes and stopping at the first
 /// failure.
 ///
