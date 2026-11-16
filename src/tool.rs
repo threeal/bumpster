@@ -86,13 +86,30 @@ pub fn check_paths(paths: &[&str]) -> Result<()> {
     Ok(())
 }
 
+/// Returns the agent that every HTTP request is sent through, which times out
+/// a request that takes longer than a minute instead of waiting forever on a
+/// stalled connection.
+#[cfg(not(tarpaulin_include))] // Only used to send requests.
+pub fn http_agent() -> &'static ureq::Agent {
+    use std::sync::LazyLock;
+    use std::time::Duration;
+
+    static AGENT: LazyLock<ureq::Agent> = LazyLock::new(|| {
+        ureq::Agent::config_builder()
+            .timeout_global(Some(Duration::from_secs(60)))
+            .build()
+            .into()
+    });
+    &AGENT
+}
+
 /// Checks that the given version of a tool is released, by requesting its
 /// release page in the given GitHub repository, where tags are the version
 /// prefixed by `tag_prefix`.
 #[cfg(not(tarpaulin_include))] // Sends a request, so it is not unit tested.
 pub fn check_release(name: &str, repository: &str, tag_prefix: &str, version: &str) -> Result<()> {
     let url = release_url(repository, tag_prefix, version);
-    match ureq::head(&url).call() {
+    match http_agent().head(&url).call() {
         Ok(_) => Ok(()),
         Err(ureq::Error::StatusCode(404)) => {
             bail!("{name} {version} is not released: {url} is not found")
@@ -156,7 +173,8 @@ pub fn check_tag(name: &str, tag: &str, tags: &[&str]) -> Result<()> {
 #[cfg(not(tarpaulin_include))] // Sends a request, so it is not unit tested.
 pub fn latest_release(repository: &str, tag_prefix: &str) -> Result<String> {
     let url = format!("https://github.com/{repository}/releases/latest");
-    let response = ureq::head(&url)
+    let response = http_agent()
+        .head(&url)
         .config()
         .max_redirects(0)
         .build()

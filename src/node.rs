@@ -246,7 +246,8 @@ fn split_simple_range(range: &str) -> Result<(&str, &str)> {
 #[cfg(not(tarpaulin_include))] // Sends a request, so it is not unit tested.
 fn fetch_index() -> Result<String> {
     let url = "https://nodejs.org/dist/index.json";
-    ureq::get(url)
+    tool::http_agent()
+        .get(url)
         .call()
         .and_then(|mut response| response.body_mut().read_to_string())
         .with_context(|| format!("failed to request {url}"))
