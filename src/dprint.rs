@@ -71,6 +71,9 @@ pub struct Bump<'a> {
     version: String,
     /// The edit of `dprint.json`.
     edit: Edit,
+    /// The default branch that the bump's pull request targets.
+    #[cfg_attr(tarpaulin_include, allow(dead_code))] // Read only by `apply`.
+    base: String,
 }
 
 /// Prepares a bump of a dprint plugin in the `plugins` field of `dprint.json`
@@ -79,9 +82,9 @@ pub struct Bump<'a> {
 ///
 /// If no target is given, the plugin is bumped to the `latest` tag.
 ///
-/// If the repository is not on the main branch or its working tree is not
-/// clean, it asks whether to switch to the main branch or discard the changes
-/// first, unless `yes` is set.
+/// If the repository is not on its default branch or its working tree is not
+/// clean, it asks whether to switch to the default branch or discard the
+/// changes first, unless `yes` is set.
 ///
 /// Returns `None`, showing that the plugin is up to date, if it's already at
 /// the version the target resolves to.
@@ -98,7 +101,7 @@ pub fn prepare<'a>(
     yes: bool,
 ) -> Result<Option<Bump<'a>>> {
     println!("checking that the repository is ready");
-    tool::prepare_repository(yes)?;
+    let base = tool::prepare_repository(yes)?;
     tool::check_paths(&["dprint.json"])?;
     let target = target.unwrap_or("latest");
     let version = tool::resolve_target(
@@ -114,7 +117,7 @@ pub fn prepare<'a>(
         println!("{} is up to date at version {current}", plugin.name);
         return Ok(None);
     }
-    Bump::new(plugin, &dprint_json, version).map(Some)
+    Bump::new(plugin, &dprint_json, version, base).map(Some)
 }
 
 /// Prepares a bump of every supported plugin in the `plugins` field of
@@ -124,9 +127,9 @@ pub fn prepare<'a>(
 /// It warns about each plugin that isn't supported, and shows each one that is
 /// already up to date.
 ///
-/// If the repository is not on the main branch or its working tree is not
-/// clean, it asks whether to switch to the main branch or discard the changes
-/// first, unless `yes` is set.
+/// If the repository is not on its default branch or its working tree is not
+/// clean, it asks whether to switch to the default branch or discard the
+/// changes first, unless `yes` is set.
 ///
 /// Returns the bumps in the order their plugins appear in `dprint.json`, which
 /// is empty if every supported plugin is up to date.
@@ -138,24 +141,24 @@ pub fn prepare<'a>(
 #[cfg(not(tarpaulin_include))] // Sends requests, so it is not unit tested.
 pub fn prepare_outdated(yes: bool) -> Result<Vec<Bump<'static>>> {
     println!("checking that the repository is ready");
-    tool::prepare_repository(yes)?;
+    let base = tool::prepare_repository(yes)?;
     tool::check_paths(&["dprint.json"])?;
-    find_outdated(&tool::read("dprint.json")?)
+    find_outdated(&tool::read("dprint.json")?, &base)
 }
 
 /// Finds every supported plugin in the given `dprint.json` file that is behind
 /// its latest release, warning about each plugin that isn't supported and
 /// showing each one that is already up to date.
 ///
-/// Returns a bump for each of them, in the order their plugins appear in the
-/// file.
+/// Returns a bump for each of them, with a pull request against the given base
+/// branch, in the order their plugins appear in the file.
 ///
 /// # Errors
 ///
 /// Returns an error if the version of a plugin can't be read or its latest
 /// release can't be found.
 #[cfg(not(tarpaulin_include))] // Sends requests, so it is not unit tested.
-pub(crate) fn find_outdated(dprint_json: &str) -> Result<Vec<Bump<'static>>> {
+pub(crate) fn find_outdated(dprint_json: &str, base: &str) -> Result<Vec<Bump<'static>>> {
     let plugins = find_plugins(dprint_json);
     for url in plugins.unsupported {
         println!("warning: {url} is not supported, skipping");
@@ -170,34 +173,36 @@ pub(crate) fn find_outdated(dprint_json: &str) -> Result<Vec<Bump<'static>>> {
             println!("{} is up to date at version {current}", plugin.name);
             continue;
         }
-        bumps.push(Bump::new(plugin, dprint_json, version)?);
+        bumps.push(Bump::new(plugin, dprint_json, version, base.to_string())?);
     }
     Ok(bumps)
 }
 
 impl Bump<'_> {
     /// Prepares a bump of a plugin to the given version, editing the given
-    /// `dprint.json` file.
+    /// `dprint.json` file, with a pull request against the given base branch.
     pub(crate) fn new<'p>(
         plugin: &'p Plugin,
         dprint_json: &str,
         version: String,
+        base: String,
     ) -> Result<Bump<'p>> {
         let edit = bump_url(dprint_json, &version, plugin)?;
         Ok(Bump {
             plugin,
             version,
             edit,
+            base,
         })
     }
 
-    /// Prepares the bump again from the latest main branch, editing
+    /// Prepares the bump again from the latest default branch, editing
     /// `dprint.json` as it is there, so a bump made after another one starts
-    /// from the main branch rather than the branch of the one before.
+    /// from the default branch rather than the branch of the one before.
     ///
-    /// If the repository is not on the main branch or its working tree is not
-    /// clean, it asks whether to switch to the main branch or discard the
-    /// changes first, unless `yes` is set.
+    /// If the repository is not on its default branch or its working tree is
+    /// not clean, it asks whether to switch to the default branch or discard
+    /// the changes first, unless `yes` is set.
     ///
     /// # Errors
     ///
@@ -206,8 +211,8 @@ impl Bump<'_> {
     #[cfg(not(tarpaulin_include))] // Runs commands, so it is not unit tested.
     pub fn refresh(self, yes: bool) -> Result<Self> {
         println!("checking that the repository is ready");
-        tool::prepare_repository(yes)?;
-        Self::new(self.plugin, &tool::read("dprint.json")?, self.version)
+        let base = tool::prepare_repository(yes)?;
+        Self::new(self.plugin, &tool::read("dprint.json")?, self.version, base)
     }
 
     /// Returns the change that the bump makes, naming the plugin and file it
@@ -247,6 +252,7 @@ impl Bump<'_> {
 
         tool::open_or_update_pull_request(
             &branch,
+            &self.base,
             plugin.name,
             plugin.repository,
             plugin.tag_prefix,
@@ -367,7 +373,13 @@ mod tests {
     #[test]
     fn bump_change() {
         let (_, plugin) = &PLUGINS[0];
-        let bump = Bump::new(plugin, DPRINT_JSON, "0.25.3".to_string()).unwrap();
+        let bump = Bump::new(
+            plugin,
+            DPRINT_JSON,
+            "0.25.3".to_string(),
+            "main".to_string(),
+        )
+        .unwrap();
         assert_eq!(
             bump.change(),
             "dprint-plugin-json in dprint.json: 0.25.2 -> 0.25.3"

@@ -15,6 +15,9 @@ pub struct Bump {
     version: String,
     /// The edit of `package.json`.
     edit: Edit,
+    /// The default branch that the bump's pull request targets.
+    #[cfg_attr(tarpaulin_include, allow(dead_code))] // Read only by `apply`.
+    base: String,
 }
 
 /// Prepares a bump of Node.js in the `devEngines.runtime` field of
@@ -27,9 +30,9 @@ pub struct Bump {
 /// If no target is given, Node.js is bumped to the newest release of the major
 /// version it's already on in `package.json`.
 ///
-/// If the repository is not on the main branch or its working tree is not
-/// clean, it asks whether to switch to the main branch or discard the changes
-/// first, unless `yes` is set.
+/// If the repository is not on its default branch or its working tree is not
+/// clean, it asks whether to switch to the default branch or discard the
+/// changes first, unless `yes` is set.
 ///
 /// Returns `None`, showing that Node.js is up to date, if it's already at the
 /// version the target resolves to.
@@ -42,7 +45,7 @@ pub struct Bump {
 #[cfg(not(tarpaulin_include))] // Sends requests, so it is not unit tested.
 pub fn prepare(target: Option<&str>, yes: bool) -> Result<Option<Bump>> {
     println!("checking that the repository is ready");
-    tool::prepare_repository(yes)?;
+    let base = tool::prepare_repository(yes)?;
     tool::check_paths(&["package.json"])?;
     let package_json = tool::read("package.json")?;
     let version = match target {
@@ -54,22 +57,23 @@ pub fn prepare(target: Option<&str>, yes: bool) -> Result<Option<Bump>> {
         println!("Node.js is up to date at version {current}");
         return Ok(None);
     }
-    Bump::new(&package_json, version).map(Some)
+    Bump::new(&package_json, version, base).map(Some)
 }
 
 /// Finds whether Node.js in the given `package.json` file is behind the newest
 /// release of the major version it's already on, showing it if it's already
 /// up to date.
 ///
-/// Returns a bump of it to that release, or `None` if it's up to date or if
-/// `devEngines.runtime` doesn't declare Node.js.
+/// Returns a bump of it to that release, with a pull request against the given
+/// base branch, or `None` if it's up to date or if `devEngines.runtime`
+/// doesn't declare Node.js.
 ///
 /// # Errors
 ///
 /// Returns an error if `package.json` can't be parsed, or if the version of
 /// Node.js can't be read or resolved.
 #[cfg(not(tarpaulin_include))] // Sends requests, so it is not unit tested.
-pub(crate) fn find_outdated(package_json: &str) -> Result<Option<Bump>> {
+pub(crate) fn find_outdated(package_json: &str, base: &str) -> Result<Option<Bump>> {
     if !declares_node(package_json)? {
         return Ok(None);
     }
@@ -79,7 +83,7 @@ pub(crate) fn find_outdated(package_json: &str) -> Result<Option<Bump>> {
         println!("Node.js is up to date at version {current}");
         return Ok(None);
     }
-    Bump::new(package_json, version).map(Some)
+    Bump::new(package_json, version, base.to_string()).map(Some)
 }
 
 /// Resolves the target of a bump to the version to bump Node.js to, where the
@@ -105,19 +109,23 @@ fn resolve_version(target: &str) -> Result<String> {
 
 impl Bump {
     /// Prepares a bump of Node.js to the given version, editing the given
-    /// `package.json` file.
-    pub(crate) fn new(package_json: &str, version: String) -> Result<Self> {
+    /// `package.json` file, with a pull request against the given base branch.
+    pub(crate) fn new(package_json: &str, version: String, base: String) -> Result<Self> {
         let edit = bump_package_json(package_json, &version)?;
-        Ok(Self { version, edit })
+        Ok(Self {
+            version,
+            edit,
+            base,
+        })
     }
 
-    /// Prepares the bump again from the latest main branch, editing
+    /// Prepares the bump again from the latest default branch, editing
     /// `package.json` as it is there, so a bump made after another one starts
-    /// from the main branch rather than the branch of the one before.
+    /// from the default branch rather than the branch of the one before.
     ///
-    /// If the repository is not on the main branch or its working tree is not
-    /// clean, it asks whether to switch to the main branch or discard the
-    /// changes first, unless `yes` is set.
+    /// If the repository is not on its default branch or its working tree is
+    /// not clean, it asks whether to switch to the default branch or discard
+    /// the changes first, unless `yes` is set.
     ///
     /// # Errors
     ///
@@ -126,9 +134,9 @@ impl Bump {
     #[cfg(not(tarpaulin_include))] // Runs commands, so it is not unit tested.
     pub fn refresh(self, yes: bool) -> Result<Self> {
         println!("checking that the repository is ready");
-        tool::prepare_repository(yes)?;
+        let base = tool::prepare_repository(yes)?;
         tool::check_paths(&["package.json"])?;
-        Self::new(&tool::read("package.json")?, self.version)
+        Self::new(&tool::read("package.json")?, self.version, base)
     }
 
     /// Returns the change that the bump makes, naming the field and file it
@@ -171,7 +179,14 @@ impl Bump {
         println!("pushing {branch} to origin");
         git::push(&branch)?;
 
-        tool::open_or_update_pull_request(&branch, "Node.js", "nodejs/node", "v", &self.version)
+        tool::open_or_update_pull_request(
+            &branch,
+            &self.base,
+            "Node.js",
+            "nodejs/node",
+            "v",
+            &self.version,
+        )
     }
 }
 
@@ -333,7 +348,12 @@ mod tests {
 
     #[test]
     fn bump_change() {
-        let bump = Bump::new(&package_json("^24.22.0"), "24.22.1".to_string()).unwrap();
+        let bump = Bump::new(
+            &package_json("^24.22.0"),
+            "24.22.1".to_string(),
+            "main".to_string(),
+        )
+        .unwrap();
         assert_eq!(
             bump.change(),
             "devEngines.runtime.version in package.json: ^24.22.0 -> ^24.22.1"

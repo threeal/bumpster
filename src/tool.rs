@@ -7,33 +7,37 @@ use std::io::IsTerminal;
 
 /// Prepares the current repository for a bump, by first checking that `gh` is
 /// logged in to open the pull request, so nothing is discarded for a bump that
-/// can't be made, then getting it onto the main branch with a clean working
-/// tree, switching to the main branch and discarding its changes after asking
-/// unless `yes` is set, then pulling the main branch from `origin` so the bump
-/// starts from its latest commit.
+/// can't be made, then getting it onto its default branch with a clean
+/// working tree, switching to the default branch and discarding its changes
+/// after asking unless `yes` is set, then pulling the default branch from
+/// `origin` so the bump starts from its latest commit.
+///
+/// Returns the name of the default branch, which the bump's pull request
+/// targets.
 #[cfg(not(tarpaulin_include))] // Runs commands, so it is not unit tested.
-pub fn prepare_repository(yes: bool) -> Result<()> {
+pub fn prepare_repository(yes: bool) -> Result<String> {
     gh::check_auth()?;
+    let base = gh::default_branch()?;
 
-    let on_main = git::current_branch()? == "main";
+    let on_base = git::current_branch()? == base;
     let changes = git::changes()?;
-    match (on_main, changes.is_empty()) {
+    match (on_base, changes.is_empty()) {
         (true, true) => {}
         (false, true) => {
-            println!("switching to the main branch");
-            git::switch("main")?;
+            println!("switching to the {base} branch");
+            git::switch(&base)?;
         }
         (false, false) => {
             println!("uncommitted changes:\n{changes}");
             confirm_fix(
-                "not on the main branch and the working tree is not clean",
-                "discard the changes and switch to the main branch",
+                &format!("not on the {base} branch and the working tree is not clean"),
+                &format!("discard the changes and switch to the {base} branch"),
                 yes,
             )?;
             println!("discarding the changes");
             git::discard_changes()?;
-            println!("switching to the main branch");
-            git::switch("main")?;
+            println!("switching to the {base} branch");
+            git::switch(&base)?;
         }
         (true, false) => {
             println!("uncommitted changes:\n{changes}");
@@ -43,12 +47,12 @@ pub fn prepare_repository(yes: bool) -> Result<()> {
         }
     }
 
-    println!("pulling the main branch from origin");
-    git::pull("main")?;
-    if git::is_ahead_of_origin("main")? {
-        bail!("the main branch has commits not pushed to origin");
+    println!("pulling the {base} branch from origin");
+    git::pull(&base)?;
+    if git::is_ahead_of_origin(&base)? {
+        bail!("the {base} branch has commits not pushed to origin");
     }
-    Ok(())
+    Ok(base)
 }
 
 /// Confirms making the given fix to the given problem with the repository,
@@ -254,15 +258,16 @@ pub struct PullRequest {
 }
 
 /// Opens the pull request for bumping a tool to the given version on the given
-/// branch, or updates the one already open there, linking to its release in
-/// the given GitHub repository, where tags are the version prefixed by
-/// `tag_prefix`.
+/// branch against the given base branch, or updates the one already open
+/// there, linking to its release in the given GitHub repository, where tags
+/// are the version prefixed by `tag_prefix`.
 ///
 /// An open pull request is given the same title, body, and base as opening one
 /// would, as the push already gave it the new commit.
 #[cfg(not(tarpaulin_include))] // Runs commands, so it is not unit tested.
 pub fn open_or_update_pull_request(
     branch: &str,
+    base: &str,
     name: &str,
     repository: &str,
     tag_prefix: &str,
@@ -272,11 +277,11 @@ pub fn open_or_update_pull_request(
     let body = pull_request_body(name, repository, tag_prefix, version);
     if let Some(url) = gh::find_pull_request(branch)? {
         println!("updating the pull request");
-        gh::edit_pull_request(&url, &title, &body)?;
+        gh::edit_pull_request(&url, base, &title, &body)?;
         return Ok(PullRequest { url, opened: false });
     }
     println!("opening a pull request");
-    let url = gh::create_pull_request(&title, &body)?;
+    let url = gh::create_pull_request(base, &title, &body)?;
     Ok(PullRequest { url, opened: true })
 }
 
