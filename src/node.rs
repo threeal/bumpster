@@ -151,8 +151,8 @@ impl Bump {
 
     /// Applies the bump, with `pnpm-lock.yaml` updated to match if it exists,
     /// since pnpm records the runtime in it, then commits the change to a new
-    /// branch, pushes it, and opens a pull request for it, or updates the one
-    /// already open.
+    /// branch with the given options, pushes it, and opens a pull request for
+    /// it, or updates the one already open.
     ///
     /// Returns the pull request, which is the one already open for the bump if
     /// there is one.
@@ -161,7 +161,7 @@ impl Bump {
     ///
     /// Returns an error if any step of it fails.
     #[cfg(not(tarpaulin_include))] // Runs commands, so it is not unit tested.
-    pub fn apply(self) -> Result<PullRequest> {
+    pub fn apply(self, options: tool::CommitOptions) -> Result<PullRequest> {
         let branch = tool::branch_name("node", &self.version);
         println!("creating branch {branch}");
         git::create_branch(&branch)?;
@@ -175,7 +175,11 @@ impl Bump {
             &["package.json"]
         };
         println!("committing {}", paths.join(" and "));
-        git::commit(&tool::commit_message("Node.js", &self.version), paths)?;
+        git::commit(
+            &tool::commit_message("Node.js", &self.version),
+            paths,
+            options,
+        )?;
         println!("pushing {branch} to origin");
         git::push(&branch)?;
 

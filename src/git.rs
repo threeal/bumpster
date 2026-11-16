@@ -6,6 +6,7 @@
 #![cfg(not(tarpaulin_include))]
 
 use crate::command::run;
+use crate::tool::CommitOptions;
 use anyhow::Result;
 
 /// Returns the name of the current branch.
@@ -52,9 +53,17 @@ pub fn create_branch(name: &str) -> Result<()> {
     run("git", &["switch", "-C", name]).map(|_| ())
 }
 
-/// Commits the given files with a sign-off and signature, skipping git hooks.
-pub fn commit(message: &str, paths: &[&str]) -> Result<()> {
-    let mut args = vec!["commit", "-nsS", "-m", message, "--"];
+/// Commits the given files, skipping git hooks, with a sign-off and signature
+/// if the given options ask for them.
+pub fn commit(message: &str, paths: &[&str], options: CommitOptions) -> Result<()> {
+    let mut args = vec!["commit", "-n"];
+    if options.signoff {
+        args.push("-s");
+    }
+    if options.gpg_sign {
+        args.push("-S");
+    }
+    args.extend(["-m", message, "--"]);
     args.extend_from_slice(paths);
     run("git", &args).map(|_| ())
 }

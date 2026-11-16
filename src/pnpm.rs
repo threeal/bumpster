@@ -229,8 +229,8 @@ impl Bump {
 
     /// Applies the bump, with `pnpm-lock.yaml` updated to match if pnpm is
     /// bumped in the `devEngines.packageManager` field, then commits the
-    /// change to a new branch, pushes it, and opens a pull request for it, or
-    /// updates the one already open.
+    /// change to a new branch with the given options, pushes it, and opens a
+    /// pull request for it, or updates the one already open.
     ///
     /// Returns the pull request, which is the one already open for the bump if
     /// there is one.
@@ -239,7 +239,7 @@ impl Bump {
     ///
     /// Returns an error if any step of it fails.
     #[cfg(not(tarpaulin_include))] // Runs commands, so it is not unit tested.
-    pub fn apply(self) -> Result<PullRequest> {
+    pub fn apply(self, options: tool::CommitOptions) -> Result<PullRequest> {
         let paths = self.field.paths();
         let branch = tool::branch_name("pnpm", &self.version);
         println!("creating branch {branch}");
@@ -251,7 +251,7 @@ impl Bump {
             command::run("pnpm", &["install", "--lockfile-only"])?;
         }
         println!("committing {}", paths.join(" and "));
-        git::commit(&tool::commit_message("pnpm", &self.version), paths)?;
+        git::commit(&tool::commit_message("pnpm", &self.version), paths, options)?;
         println!("pushing {branch} to origin");
         git::push(&branch)?;
 

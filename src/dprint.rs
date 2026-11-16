@@ -225,8 +225,9 @@ impl Bump<'_> {
         )
     }
 
-    /// Applies the bump, then commits the change to a new branch, pushes it,
-    /// and opens a pull request for it, or updates the one already open.
+    /// Applies the bump, then commits the change to a new branch with the given
+    /// options, pushes it, and opens a pull request for it, or updates the one
+    /// already open.
     ///
     /// Returns the pull request, which is the one already open for the bump if
     /// there is one.
@@ -235,7 +236,7 @@ impl Bump<'_> {
     ///
     /// Returns an error if any step of it fails.
     #[cfg(not(tarpaulin_include))] // Runs commands, so it is not unit tested.
-    pub fn apply(self) -> Result<PullRequest> {
+    pub fn apply(self, options: tool::CommitOptions) -> Result<PullRequest> {
         let plugin = self.plugin;
         let branch = tool::branch_name(plugin.name, &self.version);
         println!("creating branch {branch}");
@@ -246,6 +247,7 @@ impl Bump<'_> {
         git::commit(
             &tool::commit_message(plugin.name, &self.version),
             &["dprint.json"],
+            options,
         )?;
         println!("pushing {branch} to origin");
         git::push(&branch)?;
