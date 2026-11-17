@@ -4,6 +4,60 @@ use std::io::IsTerminal;
 
 #[cfg(not(tarpaulin_include))]
 fn main() {
+    let matches = command().get_matches();
+
+    let result =
+        match matches.subcommand() {
+            Some(("dprint", matches)) => matches.get_one::<String>("plugin").map_or_else(
+                || {
+                    bumpster::dprint::prepare_outdated(yes(matches)).and_then(|bumps| {
+                        let bumps = bumps.into_iter().map(bumpster::all::Bump::Dprint);
+                        finish_all(
+                            bumps.collect(),
+                            "every plugin is up to date",
+                            yes(matches),
+                            commit_options(matches),
+                        )
+                    })
+                },
+                |plugin| bump_dprint_plugin(plugin, matches),
+            ),
+            Some(("node", matches)) => bumpster::node::prepare(target(matches), yes(matches))
+                .and_then(|bump| {
+                    bump.map_or(Ok(()), |bump| {
+                        finish(&bump.change(), yes(matches), || {
+                            bump.apply(commit_options(matches))
+                        })
+                    })
+                }),
+            Some(("pnpm", matches)) => bumpster::pnpm::prepare(target(matches), yes(matches))
+                .and_then(|bump| {
+                    bump.map_or(Ok(()), |bump| {
+                        finish(&bump.change(), yes(matches), || {
+                            bump.apply(commit_options(matches))
+                        })
+                    })
+                }),
+            None => bumpster::all::prepare_outdated(yes(&matches)).and_then(|bumps| {
+                finish_all(
+                    bumps,
+                    "everything is up to date",
+                    yes(&matches),
+                    commit_options(&matches),
+                )
+            }),
+            Some((name, _)) => unreachable!("{name} is not a subcommand"),
+        };
+
+    if let Err(err) = result {
+        eprintln!("error: {err:#}");
+        std::process::exit(1);
+    }
+}
+
+/// Returns the command-line interface of Bumpster.
+#[cfg(not(tarpaulin_include))]
+fn command() -> clap::Command {
     let target_arg = |tags: &'static [&'static str], default: &str| {
         clap::Arg::new("target").value_name("VERSION").help(format!(
             "The version to bump to, or a tag of it: {}. If not given, bumps to {default}",
@@ -11,11 +65,18 @@ fn main() {
         ))
     };
     let yes_arg = || clap::arg!(-y --yes "Answer yes to every question, including discarding uncommitted changes");
-    let matches = clap::Command::new("bumpster")
+    let commit_args = || {
+        [
+            clap::arg!(-s --signoff "Add a Signed-off-by trailer to each commit, as git commit --signoff does"),
+            clap::arg!(-S --"gpg-sign" "Sign each commit, as git commit --gpg-sign does"),
+        ]
+    };
+    clap::Command::new("bumpster")
         .version(env!("CARGO_PKG_VERSION"))
         .about("Bump the version of a tool, or every outdated one, in the current repository")
         .args_conflicts_with_subcommands(true)
         .arg(yes_arg())
+        .args(commit_args())
         .subcommand(
             clap::Command::new("dprint")
                 .about("Bump a dprint plugin, or every outdated one, in the plugins field of dprint.json")
@@ -28,7 +89,8 @@ fn main() {
                     &bumpster::dprint::TAGS,
                     "the plugin's latest release (latest)",
                 ))
-                .arg(yes_arg()),
+                .arg(yes_arg())
+                .args(commit_args()),
         )
         .subcommand(
             clap::Command::new("node")
@@ -37,7 +99,8 @@ fn main() {
                     &bumpster::node::TAGS,
                     "the newest release of its current major version",
                 ))
-                .arg(yes_arg()),
+                .arg(yes_arg())
+                .args(commit_args()),
         )
         .subcommand(
             clap::Command::new("pnpm")
@@ -46,42 +109,9 @@ fn main() {
                     &bumpster::pnpm::TAGS,
                     "the newest release of its current major version",
                 ))
-                .arg(yes_arg()),
+                .arg(yes_arg())
+                .args(commit_args()),
         )
-        .get_matches();
-
-    let result =
-        match matches.subcommand() {
-            Some(("dprint", matches)) => matches.get_one::<String>("plugin").map_or_else(
-                || {
-                    bumpster::dprint::prepare_outdated(yes(matches)).and_then(|bumps| {
-                        let bumps = bumps.into_iter().map(bumpster::all::Bump::Dprint);
-                        finish_all(bumps.collect(), "every plugin is up to date", yes(matches))
-                    })
-                },
-                |plugin| bump_dprint_plugin(plugin, matches),
-            ),
-            Some(("node", matches)) => bumpster::node::prepare(target(matches), yes(matches))
-                .and_then(|bump| {
-                    bump.map_or(Ok(()), |bump| {
-                        finish(&bump.change(), yes(matches), || bump.apply())
-                    })
-                }),
-            Some(("pnpm", matches)) => bumpster::pnpm::prepare(target(matches), yes(matches))
-                .and_then(|bump| {
-                    bump.map_or(Ok(()), |bump| {
-                        finish(&bump.change(), yes(matches), || bump.apply())
-                    })
-                }),
-            None => bumpster::all::prepare_outdated(yes(&matches))
-                .and_then(|bumps| finish_all(bumps, "everything is up to date", yes(&matches))),
-            Some((name, _)) => unreachable!("{name} is not a subcommand"),
-        };
-
-    if let Err(err) = result {
-        eprintln!("error: {err:#}");
-        std::process::exit(1);
-    }
 }
 
 /// Returns the target to bump to, given as a version or a tag of it, or `None`
@@ -96,6 +126,16 @@ fn target(matches: &clap::ArgMatches) -> Option<&str> {
 #[cfg(not(tarpaulin_include))]
 fn yes(matches: &clap::ArgMatches) -> bool {
     matches.get_flag("yes")
+}
+
+/// Returns the options for committing a bump, given as the signoff and
+/// gpg-sign flags.
+#[cfg(not(tarpaulin_include))]
+fn commit_options(matches: &clap::ArgMatches) -> bumpster::CommitOptions {
+    bumpster::CommitOptions {
+        signoff: matches.get_flag("signoff"),
+        gpg_sign: matches.get_flag("gpg-sign"),
+    }
 }
 
 /// Finishes a prepared bump that makes the given change, by showing the
@@ -127,7 +167,9 @@ fn bump_dprint_plugin(plugin: &str, matches: &clap::ArgMatches) -> anyhow::Resul
         .expect("the plugin is validated by clap");
     bumpster::dprint::prepare(plugin, target(matches), yes(matches)).and_then(|bump| {
         bump.map_or(Ok(()), |bump| {
-            finish(&bump.change(), yes(matches), || bump.apply())
+            finish(&bump.change(), yes(matches), || {
+                bump.apply(commit_options(matches))
+            })
         })
     })
 }
@@ -135,13 +177,19 @@ fn bump_dprint_plugin(plugin: &str, matches: &clap::ArgMatches) -> anyhow::Resul
 /// Finishes the prepared bumps of everything that is outdated, by showing
 /// their changes and, unless confirmation is skipped, asking once whether to
 /// go ahead, then applying them one after another from the default branch,
+/// committing them with the given options,
 /// showing the URL of each pull request as it goes and stopping at the first
 /// failure.
 ///
 /// If there are no bumps, it shows the given message saying everything is up
 /// to date instead.
 #[cfg(not(tarpaulin_include))]
-fn finish_all(bumps: Vec<bumpster::all::Bump>, up_to_date: &str, yes: bool) -> anyhow::Result<()> {
+fn finish_all(
+    bumps: Vec<bumpster::all::Bump>,
+    up_to_date: &str,
+    yes: bool,
+    options: bumpster::CommitOptions,
+) -> anyhow::Result<()> {
     let question = match bumps.len() {
         0 => {
             println!("{up_to_date}");
@@ -158,7 +206,7 @@ fn finish_all(bumps: Vec<bumpster::all::Bump>, up_to_date: &str, yes: bool) -> a
         return Ok(());
     }
     for bump in bumps {
-        show(&bump.refresh(yes)?.apply()?);
+        show(&bump.refresh(yes)?.apply(options)?);
     }
     Ok(())
 }

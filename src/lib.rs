@@ -10,4 +10,4 @@ pub mod pnpm;
 pub mod prompt;
 mod tool;
 
-pub use tool::PullRequest;
+pub use tool::{CommitOptions, PullRequest};

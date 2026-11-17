@@ -75,17 +75,18 @@ impl Bump {
         }
     }
 
-    /// Applies the bump, as the bump of its tool does.
+    /// Applies the bump, committing it with the given options, as the bump of
+    /// its tool does.
     ///
     /// # Errors
     ///
     /// Returns an error if any step of it fails.
     #[cfg(not(tarpaulin_include))] // Runs commands, so it is not unit tested.
-    pub fn apply(self) -> Result<PullRequest> {
+    pub fn apply(self, options: tool::CommitOptions) -> Result<PullRequest> {
         match self {
-            Self::Dprint(bump) => bump.apply(),
-            Self::Node(bump) => bump.apply(),
-            Self::Pnpm(bump) => bump.apply(),
+            Self::Dprint(bump) => bump.apply(options),
+            Self::Node(bump) => bump.apply(options),
+            Self::Pnpm(bump) => bump.apply(options),
         }
     }
 }

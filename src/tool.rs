@@ -265,6 +265,17 @@ pub fn commit_message(name: &str, version: &str) -> String {
     format!("bump {name} to version {version}")
 }
 
+/// The options for the commit of a bump, saying which of `git commit`'s
+/// options to add to it.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct CommitOptions {
+    /// Whether to add a `Signed-off-by` trailer, as `--signoff` does.
+    pub signoff: bool,
+    /// Whether to sign the commit, as `--gpg-sign` does. Without it, git still
+    /// signs the commit if the user's `commit.gpgSign` setting asks for it.
+    pub gpg_sign: bool,
+}
+
 /// The pull request for a bump.
 #[derive(Debug)]
 pub struct PullRequest {
