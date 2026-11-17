@@ -1,6 +1,6 @@
 # Bumpster
 
-A command-line tool for bumping tool versions that Dependabot can't, such as Node.js, pnpm, or dprint plugins. Run it inside a repository, and it updates the version, commits the change, and opens a pull request authored by you, so you decide when each bump lands.
+A command-line tool for bumping tool versions that Dependabot can't, such as Go, Node.js, pnpm, or dprint plugins. Run it inside a repository, and it updates the version, commits the change, and opens a pull request authored by you, so you decide when each bump lands.
 
 ## Installation
 
@@ -27,6 +27,7 @@ Run `bumpster` without a tool to check every supported tool the repository uses 
 The supported tools are:
 
 - **`dprint <plugin>`** — a dprint plugin in the `plugins` field of `dprint.json`, where `<plugin>` is one of `json`, `markdown`, `toml`, or `yaml` (for `g-plane/pretty_yaml`). It defaults to the `latest` tag, the plugin's latest GitHub release. Without a plugin, `dprint` checks every plugin in `dprint.json` against its latest release instead, warning about any plugin it doesn't support and showing the ones already up to date, then asks once whether to open a pull request for each outdated plugin. Each bump then runs in turn from the default branch, the same as bumping that plugin alone, stopping at the first one that fails and ending on the last bump's branch.
+- **`go`** — Go, in the `go` directive of `go.mod`, removing a `toolchain` directive that the new version makes redundant, since it names a Go release no newer than that version. It defaults to the newest patch release of the minor version already in `go.mod`, since the `go` directive is also the minimum Go version every user of the module needs, and also supports the `latest` tag, the newest stable release. A version with only a major, or a major and minor, such as `1` or `1.28`, bumps to the newest stable release matching it. Its versions are looked up in Go's list of releases on `go.dev`.
 - **`node`** — Node.js, in the `devEngines.runtime` field of `package.json`, with `pnpm-lock.yaml` updated to match if the repository has one. It defaults to the newest release of the major version already in `package.json`, and also supports the `lts` tag, the newest LTS release, and `latest`, the newest release. A version with only a major, or a major and minor, such as `24` or `24.22`, bumps to the newest release matching it.
 - **`pnpm`** — pnpm, in the `devEngines.packageManager` field of `package.json` with `pnpm-lock.yaml` updated to match, or in the `packageManager` field if that's not set. It defaults to the newest release of the major version already in `package.json`, and also supports the `latest` tag, the version pnpm marks as latest on npm. A version with only a major, or a major and minor, such as `10` or `10.18`, bumps to the newest release matching it. Its versions are looked up in the npm registry, where pnpm is installed from.
 

@@ -259,9 +259,8 @@ impl Bump {
             &branch,
             &self.base,
             "pnpm",
-            "pnpm/pnpm",
-            "v",
             &self.version,
+            &tool::release_url("pnpm/pnpm", "v", &self.version),
         )
     }
 }

@@ -288,8 +288,7 @@ pub struct PullRequest {
 
 /// Opens the pull request for bumping a tool to the given version on the given
 /// branch against the given base branch, or updates the one already open
-/// there, linking to its release in the given GitHub repository, where tags
-/// are the version prefixed by `tag_prefix`.
+/// there, linking to the given URL of the version's release.
 ///
 /// An open pull request is given the same title, body, and base as opening one
 /// would, as the push already gave it the new commit.
@@ -298,12 +297,11 @@ pub fn open_or_update_pull_request(
     branch: &str,
     base: &str,
     name: &str,
-    repository: &str,
-    tag_prefix: &str,
     version: &str,
+    release_url: &str,
 ) -> Result<PullRequest> {
     let title = pull_request_title(name, version);
-    let body = pull_request_body(name, repository, tag_prefix, version);
+    let body = pull_request_body(name, version, release_url);
     if let Some(url) = gh::find_pull_request(branch)? {
         println!("updating the pull request");
         gh::edit_pull_request(&url, base, &title, &body)?;
@@ -322,14 +320,10 @@ pub fn pull_request_title(name: &str, version: &str) -> String {
 }
 
 /// Returns the description of the pull request for bumping a tool to the
-/// given version, linking to its release in the given GitHub repository,
-/// where tags are the version prefixed by `tag_prefix`.
+/// given version, linking to the given URL of the version's release.
 #[must_use]
-pub fn pull_request_body(name: &str, repository: &str, tag_prefix: &str, version: &str) -> String {
-    format!(
-        "This pull request bumps {name} to version [{version}]({}).",
-        release_url(repository, tag_prefix, version)
-    )
+pub fn pull_request_body(name: &str, version: &str, release_url: &str) -> String {
+    format!("This pull request bumps {name} to version [{version}]({release_url}).")
 }
 
 /// Returns the URL of the release of the given version in the given GitHub
@@ -386,7 +380,11 @@ mod tests {
             "Bump Node.js to version 24.22.1"
         );
         assert_eq!(
-            pull_request_body("Node.js", "nodejs/node", "v", "24.22.1"),
+            pull_request_body(
+                "Node.js",
+                "24.22.1",
+                "https://github.com/nodejs/node/releases/tag/v24.22.1"
+            ),
             "This pull request bumps Node.js to version [24.22.1](https://github.com/nodejs/node/releases/tag/v24.22.1)."
         );
         assert_eq!(
