@@ -38,10 +38,15 @@ fn main() {
                         })
                     })
                 }),
-            None => bumpster::all::prepare_outdated(yes(&matches)).and_then(|bumps| {
+            None => bumpster::all::prepare_outdated(yes(&matches)).and_then(|outdated| {
+                let up_to_date = if outdated.skipped {
+                    "nothing else to bump"
+                } else {
+                    "everything is up to date"
+                };
                 finish_all(
-                    bumps,
-                    "everything is up to date",
+                    outdated.bumps,
+                    up_to_date,
                     yes(&matches),
                     commit_options(&matches),
                 )
