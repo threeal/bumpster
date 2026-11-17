@@ -2,13 +2,15 @@
 //! version its own bump defaults to.
 
 use crate::tool::{self, PullRequest};
-use crate::{dprint, node, pnpm};
+use crate::{dprint, go, node, pnpm};
 use anyhow::Result;
 
 /// A bump of any supported tool.
 pub enum Bump {
     /// A bump of a dprint plugin.
     Dprint(dprint::Bump<'static>),
+    /// A bump of Go.
+    Go(go::Bump),
     /// A bump of Node.js.
     Node(node::Bump),
     /// A bump of pnpm.
@@ -19,8 +21,8 @@ pub enum Bump {
 /// version its own bump defaults to.
 #[derive(Default)]
 pub struct Outdated {
-    /// The bumps of dprint plugins, Node.js, then pnpm, which is empty if every
-    /// tool that wasn't skipped is up to date.
+    /// The bumps of dprint plugins, Go, Node.js, then pnpm, which is empty if
+    /// every tool that wasn't skipped is up to date.
     pub bumps: Vec<Bump>,
     /// Whether any tool was skipped because finding whether it is behind
     /// failed.
@@ -54,6 +56,10 @@ pub fn prepare_outdated(yes: bool) -> Result<Outdated> {
         let found = outdated.or_skip("dprint", dprint::find_outdated(&dprint_json, &base));
         outdated.bumps.extend(found.into_iter().map(Bump::Dprint));
     }
+    if let Some(go_mod) = outdated.or_skip("Go", tool::read_if_exists("go.mod")) {
+        let found = outdated.or_skip("Go", go::find_outdated(&go_mod, &base));
+        outdated.bumps.extend(found.map(Bump::Go));
+    }
     let package_json = tool::read_if_exists("package.json");
     if let Some(package_json) = outdated.or_skip("Node.js and pnpm", package_json) {
         let found = outdated.or_skip("Node.js", node::find_outdated(&package_json, &base));
@@ -83,6 +89,7 @@ impl Bump {
     pub fn change(&self) -> String {
         match self {
             Self::Dprint(bump) => bump.change(),
+            Self::Go(bump) => bump.change(),
             Self::Node(bump) => bump.change(),
             Self::Pnpm(bump) => bump.change(),
         }
@@ -98,6 +105,7 @@ impl Bump {
     pub fn refresh(self, yes: bool) -> Result<Self> {
         match self {
             Self::Dprint(bump) => bump.refresh(yes).map(Self::Dprint),
+            Self::Go(bump) => bump.refresh(yes).map(Self::Go),
             Self::Node(bump) => bump.refresh(yes).map(Self::Node),
             Self::Pnpm(bump) => bump.refresh(yes).map(Self::Pnpm),
         }
@@ -113,6 +121,7 @@ impl Bump {
     pub fn apply(self, options: tool::CommitOptions) -> Result<PullRequest> {
         match self {
             Self::Dprint(bump) => bump.apply(options),
+            Self::Go(bump) => bump.apply(options),
             Self::Node(bump) => bump.apply(options),
             Self::Pnpm(bump) => bump.apply(options),
         }
@@ -161,6 +170,17 @@ mod tests {
                     .unwrap(),
                 ),
                 "dprint-plugin-toml in dprint.json: 0.9.0 -> 0.10.0",
+            ),
+            (
+                Bump::Go(
+                    go::Bump::new(
+                        "module example.com/foo\n\ngo 1.27.2\n",
+                        "1.27.4".to_string(),
+                        "main".to_string(),
+                    )
+                    .unwrap(),
+                ),
+                "go directive in go.mod: 1.27.2 -> 1.27.4",
             ),
             (
                 Bump::Node(

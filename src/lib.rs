@@ -5,6 +5,7 @@ mod command;
 pub mod dprint;
 mod gh;
 mod git;
+pub mod go;
 pub mod node;
 pub mod pnpm;
 pub mod prompt;

@@ -256,9 +256,8 @@ impl Bump<'_> {
             &branch,
             &self.base,
             plugin.name,
-            plugin.repository,
-            plugin.tag_prefix,
             &self.version,
+            &tool::release_url(plugin.repository, plugin.tag_prefix, &self.version),
         )
     }
 }
@@ -496,13 +495,8 @@ mod tests {
         for ((_, plugin), (name, url)) in PLUGINS.iter().zip(cases) {
             assert_eq!(plugin.name, name);
             assert_eq!(
-                tool::pull_request_body(
-                    plugin.name,
-                    plugin.repository,
-                    plugin.tag_prefix,
-                    "0.25.3"
-                ),
-                format!("This pull request bumps {name} to version [0.25.3]({url}).")
+                tool::release_url(plugin.repository, plugin.tag_prefix, "0.25.3"),
+                url
             );
         }
     }

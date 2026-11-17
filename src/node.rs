@@ -187,9 +187,8 @@ impl Bump {
             &branch,
             &self.base,
             "Node.js",
-            "nodejs/node",
-            "v",
             &self.version,
+            &tool::release_url("nodejs/node", "v", &self.version),
         )
     }
 }

@@ -22,6 +22,15 @@ fn main() {
                 },
                 |plugin| bump_dprint_plugin(plugin, matches),
             ),
+            Some(("go", matches)) => {
+                bumpster::go::prepare(target(matches), yes(matches)).and_then(|bump| {
+                    bump.map_or(Ok(()), |bump| {
+                        finish(&bump.change(), yes(matches), || {
+                            bump.apply(commit_options(matches))
+                        })
+                    })
+                })
+            }
             Some(("node", matches)) => bumpster::node::prepare(target(matches), yes(matches))
                 .and_then(|bump| {
                     bump.map_or(Ok(()), |bump| {
@@ -93,6 +102,16 @@ fn command() -> clap::Command {
                 .arg(target_arg(
                     &bumpster::dprint::TAGS,
                     "the plugin's latest release (latest)",
+                ))
+                .arg(yes_arg())
+                .args(commit_args()),
+        )
+        .subcommand(
+            clap::Command::new("go")
+                .about("Bump Go in the go directive of go.mod")
+                .arg(target_arg(
+                    &bumpster::go::TAGS,
+                    "the newest patch release of its current minor version",
                 ))
                 .arg(yes_arg())
                 .args(commit_args()),
