@@ -9,6 +9,7 @@ pub mod go;
 pub mod node;
 pub mod pnpm;
 pub mod prompt;
+pub mod sdkman;
 mod tool;
 
 pub use tool::{CommitOptions, PullRequest};

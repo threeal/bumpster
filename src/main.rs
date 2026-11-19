@@ -47,6 +47,20 @@ fn main() {
                         })
                     })
                 }),
+            Some(("sdkman", matches)) => matches.get_one::<String>("candidate").map_or_else(
+                || {
+                    bumpster::sdkman::prepare_outdated(yes(matches)).and_then(|bumps| {
+                        let bumps = bumps.into_iter().map(bumpster::all::Bump::Sdkman);
+                        finish_all(
+                            bumps.collect(),
+                            "every candidate is up to date",
+                            yes(matches),
+                            commit_options(matches),
+                        )
+                    })
+                },
+                |candidate| bump_sdkman_candidate(candidate, matches),
+            ),
             None => bumpster::all::prepare_outdated(yes(&matches)).and_then(|outdated| {
                 let up_to_date = if outdated.skipped {
                     "nothing else to bump"
@@ -136,6 +150,21 @@ fn command() -> clap::Command {
                 .arg(yes_arg())
                 .args(commit_args()),
         )
+        .subcommand(
+            clap::Command::new("sdkman")
+                .about("Bump a SDKMAN! candidate, or every outdated one, in .sdkmanrc")
+                .arg(clap::arg!([candidate] "The candidate to bump. If not given, bumps every candidate in .sdkmanrc that is behind the newest release of its current major version").value_parser(
+                    clap::builder::PossibleValuesParser::new(
+                        bumpster::sdkman::CANDIDATES.iter().map(bumpster::sdkman::Candidate::key),
+                    ),
+                ))
+                .arg(target_arg(
+                    &bumpster::sdkman::TAGS,
+                    "the newest release of its current major version from the same vendor",
+                ))
+                .arg(yes_arg())
+                .args(commit_args()),
+        )
 }
 
 /// Returns the target to bump to, given as a version or a tag of it, or `None`
@@ -190,6 +219,23 @@ fn bump_dprint_plugin(plugin: &str, matches: &clap::ArgMatches) -> anyhow::Resul
         .find(|(name, _)| *name == plugin)
         .expect("the plugin is validated by clap");
     bumpster::dprint::prepare(plugin, target(matches), yes(matches)).and_then(|bump| {
+        bump.map_or(Ok(()), |bump| {
+            finish(&bump.change(), yes(matches), || {
+                bump.apply(commit_options(matches))
+            })
+        })
+    })
+}
+
+/// Bumps the SDKMAN! candidate with the given key to the target given in the
+/// arguments.
+#[cfg(not(tarpaulin_include))]
+fn bump_sdkman_candidate(candidate: &str, matches: &clap::ArgMatches) -> anyhow::Result<()> {
+    let candidate = bumpster::sdkman::CANDIDATES
+        .iter()
+        .find(|supported| supported.key() == candidate)
+        .expect("the candidate is validated by clap");
+    bumpster::sdkman::prepare(candidate, target(matches), yes(matches)).and_then(|bump| {
         bump.map_or(Ok(()), |bump| {
             finish(&bump.change(), yes(matches), || {
                 bump.apply(commit_options(matches))
