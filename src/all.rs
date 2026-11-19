@@ -2,7 +2,7 @@
 //! version its own bump defaults to.
 
 use crate::tool::{self, PullRequest};
-use crate::{dprint, go, node, pnpm};
+use crate::{dprint, go, node, pnpm, sdkman};
 use anyhow::Result;
 
 /// A bump of any supported tool.
@@ -15,14 +15,17 @@ pub enum Bump {
     Node(node::Bump),
     /// A bump of pnpm.
     Pnpm(pnpm::Bump),
+    /// A bump of a SDKMAN! candidate.
+    Sdkman(sdkman::Bump<'static>),
 }
 
 /// The bumps of every supported tool in the repository that is behind the
 /// version its own bump defaults to.
 #[derive(Default)]
 pub struct Outdated {
-    /// The bumps of dprint plugins, Go, Node.js, then pnpm, which is empty if
-    /// every tool that wasn't skipped is up to date.
+    /// The bumps of dprint plugins, Go, Node.js, pnpm, then SDKMAN!
+    /// candidates, which is empty if every tool that wasn't skipped is up to
+    /// date.
     pub bumps: Vec<Bump>,
     /// Whether any tool was skipped because finding whether it is behind
     /// failed.
@@ -67,6 +70,10 @@ pub fn prepare_outdated(yes: bool) -> Result<Outdated> {
         let found = outdated.or_skip("pnpm", pnpm::find_outdated(&package_json, &base));
         outdated.bumps.extend(found.map(Bump::Pnpm));
     }
+    if let Some(sdkmanrc) = outdated.or_skip("SDKMAN!", tool::read_if_exists(".sdkmanrc")) {
+        let found = outdated.or_skip("SDKMAN!", sdkman::find_outdated(&sdkmanrc, &base));
+        outdated.bumps.extend(found.into_iter().map(Bump::Sdkman));
+    }
     Ok(outdated)
 }
 
@@ -92,6 +99,7 @@ impl Bump {
             Self::Go(bump) => bump.change(),
             Self::Node(bump) => bump.change(),
             Self::Pnpm(bump) => bump.change(),
+            Self::Sdkman(bump) => bump.change(),
         }
     }
 
@@ -108,6 +116,7 @@ impl Bump {
             Self::Go(bump) => bump.refresh(yes).map(Self::Go),
             Self::Node(bump) => bump.refresh(yes).map(Self::Node),
             Self::Pnpm(bump) => bump.refresh(yes).map(Self::Pnpm),
+            Self::Sdkman(bump) => bump.refresh(yes).map(Self::Sdkman),
         }
     }
 
@@ -124,6 +133,7 @@ impl Bump {
             Self::Go(bump) => bump.apply(options),
             Self::Node(bump) => bump.apply(options),
             Self::Pnpm(bump) => bump.apply(options),
+            Self::Sdkman(bump) => bump.apply(options),
         }
     }
 }
@@ -195,6 +205,18 @@ mod tests {
                         .unwrap(),
                 ),
                 "devEngines.packageManager.version in package.json: ^10.18.0 -> ^10.19.0",
+            ),
+            (
+                Bump::Sdkman(
+                    sdkman::Bump::new(
+                        &sdkman::CANDIDATES[0],
+                        "java=25.0.5.0+8-tem\n",
+                        "25.0.5.1+2-tem".to_string(),
+                        "main".to_string(),
+                    )
+                    .unwrap(),
+                ),
+                "java in .sdkmanrc: 25.0.5.0+8-tem -> 25.0.5.1+2-tem",
             ),
         ];
         for (bump, change) in cases {
