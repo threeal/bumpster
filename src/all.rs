@@ -1,7 +1,7 @@
 //! Bumping every supported tool in a repository that is behind, each to the
 //! version its own bump defaults to.
 
-use crate::tool::{self, PullRequest};
+use crate::tool::{self, Outdated, PullRequest};
 use crate::{dprint, go, node, pnpm, sdkman};
 use anyhow::Result;
 
@@ -19,45 +19,34 @@ pub enum Bump {
     Sdkman(sdkman::Bump<'static>),
 }
 
-/// The bumps of every supported tool in the repository that is behind the
-/// version its own bump defaults to.
-#[derive(Default)]
-pub struct Outdated {
-    /// The bumps of dprint plugins, Go, Node.js, pnpm, then SDKMAN!
-    /// candidates, which is empty if every tool that wasn't skipped is up to
-    /// date.
-    pub bumps: Vec<Bump>,
-    /// Whether any tool was skipped because finding whether it is behind
-    /// failed.
-    pub skipped: bool,
-}
-
 /// Prepares a bump of every supported tool in the repository that is behind
 /// the version its own bump defaults to, without changing anything yet,
 /// showing each one that is already up to date.
 ///
 /// Tools the repository doesn't use are skipped without showing anything,
 /// while a tool whose file can't be read or whose version can't be read or
-/// resolved is skipped with a warning, without stopping the other tools.
+/// resolved, and an entry of a tool that isn't supported, are skipped with a
+/// warning, without stopping the other tools.
 ///
 /// If the repository is not on its default branch or its working tree is not
 /// clean, it asks whether to switch to the default branch or discard the
 /// changes first, unless `yes` is set.
 ///
-/// Returns the bumps of the tools that are behind, along with whether any tool
-/// was skipped.
+/// Returns the bumps of the tools that are behind, in the order of dprint
+/// plugins, Go, Node.js, pnpm, then SDKMAN! candidates, along with whether
+/// anything was skipped.
 ///
 /// # Errors
 ///
 /// Returns an error if the repository is not ready for the bumps.
 #[cfg(not(tarpaulin_include))] // Sends requests, so it is not unit tested.
-pub fn prepare_outdated(yes: bool) -> Result<Outdated> {
+pub fn prepare_outdated(yes: bool) -> Result<Outdated<Bump>> {
     println!("checking that the repository is ready");
     let base = tool::prepare_repository(yes)?;
     let mut outdated = Outdated::default();
     if let Some(dprint_json) = outdated.or_skip("dprint", tool::read_if_exists("dprint.json")) {
         let found = outdated.or_skip("dprint", dprint::find_outdated(&dprint_json, &base));
-        outdated.bumps.extend(found.into_iter().map(Bump::Dprint));
+        outdated.extend(found.map(Bump::Dprint));
     }
     if let Some(go_mod) = outdated.or_skip("Go", tool::read_if_exists("go.mod")) {
         let found = outdated.or_skip("Go", go::find_outdated(&go_mod, &base));
@@ -72,22 +61,9 @@ pub fn prepare_outdated(yes: bool) -> Result<Outdated> {
     }
     if let Some(sdkmanrc) = outdated.or_skip("SDKMAN!", tool::read_if_exists(".sdkmanrc")) {
         let found = outdated.or_skip("SDKMAN!", sdkman::find_outdated(&sdkmanrc, &base));
-        outdated.bumps.extend(found.into_iter().map(Bump::Sdkman));
+        outdated.extend(found.map(Bump::Sdkman));
     }
     Ok(outdated)
-}
-
-impl Outdated {
-    /// Returns what was found for the tools with the given name, or, if
-    /// finding it failed, warns that those tools are skipped, records the
-    /// skip, and returns nothing found, so the other tools can still be bumped.
-    fn or_skip<T: Default>(&mut self, name: &str, found: Result<T>) -> T {
-        found.unwrap_or_else(|err| {
-            println!("warning: skipping {name}: {err:#}");
-            self.skipped = true;
-            T::default()
-        })
-    }
 }
 
 impl Bump {
@@ -141,22 +117,6 @@ impl Bump {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn outdated_or_skip_found() {
-        let mut outdated = Outdated::default();
-        let found = outdated.or_skip("Node.js", Ok(Some("24.12.0")));
-        assert_eq!(found, Some("24.12.0"));
-        assert!(!outdated.skipped);
-    }
-
-    #[test]
-    fn outdated_or_skip_failed() {
-        let mut outdated = Outdated::default();
-        let found: Result<Option<&str>> = Err(anyhow::anyhow!("failed to request"));
-        assert_eq!(outdated.or_skip("Node.js", found), None);
-        assert!(outdated.skipped);
-    }
 
     #[test]
     fn bump_change() {
