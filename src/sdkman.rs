@@ -6,7 +6,7 @@
 //! bump's pull request. Java from any other vendor is not supported.
 
 use crate::git;
-use crate::tool::{self, Edit, PullRequest};
+use crate::tool::{self, Edit, Outdated, PullRequest};
 use anyhow::{Context, Result, bail};
 use std::cmp::Ordering;
 use std::fmt;
@@ -117,14 +117,15 @@ pub fn prepare<'a>(
 /// changes first, unless `yes` is set.
 ///
 /// Returns the bumps in the order their candidates appear in `.sdkmanrc`,
-/// which is empty if every supported candidate is up to date.
+/// which is empty if every supported candidate is up to date, along with
+/// whether any candidate was skipped for not being supported.
 ///
 /// # Errors
 ///
 /// Returns an error if the repository is not ready for the bumps, or if the
 /// identifier of a candidate can't be read or resolved.
 #[cfg(not(tarpaulin_include))] // Sends requests, so it is not unit tested.
-pub fn prepare_outdated(yes: bool) -> Result<Vec<Bump<'static>>> {
+pub fn prepare_outdated(yes: bool) -> Result<Outdated<Bump<'static>>> {
     println!("checking that the repository is ready");
     let base = tool::prepare_repository(yes)?;
     tool::check_paths(&[".sdkmanrc"])?;
@@ -137,20 +138,24 @@ pub fn prepare_outdated(yes: bool) -> Result<Vec<Bump<'static>>> {
 /// from another vendor, and showing each one that is already up to date.
 ///
 /// Returns a bump for each of them, with a pull request against the given base
-/// branch, in the order their candidates appear in the file.
+/// branch, in the order their candidates appear in the file, along with
+/// whether any candidate was skipped for not being supported.
 ///
 /// # Errors
 ///
 /// Returns an error if the identifier of a candidate can't be read or
 /// resolved.
 #[cfg(not(tarpaulin_include))] // Sends requests, so it is not unit tested.
-pub(crate) fn find_outdated(sdkmanrc: &str, base: &str) -> Result<Vec<Bump<'static>>> {
+pub(crate) fn find_outdated(sdkmanrc: &str, base: &str) -> Result<Outdated<Bump<'static>>> {
     let candidates = find_candidates(sdkmanrc);
-    for (key, value) in candidates.unsupported {
+    for (key, value) in &candidates.unsupported {
         println!("warning: {key}={value} in .sdkmanrc is not supported, skipping");
     }
 
-    let mut bumps = Vec::new();
+    let mut outdated = Outdated {
+        bumps: Vec::new(),
+        skipped: !candidates.unsupported.is_empty(),
+    };
     for candidate in candidates.supported {
         let current = current_identifier(sdkmanrc, candidate)?;
         let identifier = resolve_identifier(candidate, current.major())?;
@@ -160,14 +165,14 @@ pub(crate) fn find_outdated(sdkmanrc: &str, base: &str) -> Result<Vec<Bump<'stat
             println!("{} is up to date at version {current}", candidate.name);
             continue;
         }
-        bumps.push(Bump::new(
+        outdated.bumps.push(Bump::new(
             candidate,
             sdkmanrc,
             identifier,
             base.to_string(),
         )?);
     }
-    Ok(bumps)
+    Ok(outdated)
 }
 
 /// Resolves the target of a bump, which is either a version or one of

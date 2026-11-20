@@ -10,10 +10,9 @@ fn main() {
         match matches.subcommand() {
             Some(("dprint", matches)) => matches.get_one::<String>("plugin").map_or_else(
                 || {
-                    bumpster::dprint::prepare_outdated(yes(matches)).and_then(|bumps| {
-                        let bumps = bumps.into_iter().map(bumpster::all::Bump::Dprint);
+                    bumpster::dprint::prepare_outdated(yes(matches)).and_then(|outdated| {
                         finish_all(
-                            bumps.collect(),
+                            outdated.map(bumpster::all::Bump::Dprint),
                             "every plugin is up to date",
                             yes(matches),
                             commit_options(matches),
@@ -49,10 +48,9 @@ fn main() {
                 }),
             Some(("sdkman", matches)) => matches.get_one::<String>("candidate").map_or_else(
                 || {
-                    bumpster::sdkman::prepare_outdated(yes(matches)).and_then(|bumps| {
-                        let bumps = bumps.into_iter().map(bumpster::all::Bump::Sdkman);
+                    bumpster::sdkman::prepare_outdated(yes(matches)).and_then(|outdated| {
                         finish_all(
-                            bumps.collect(),
+                            outdated.map(bumpster::all::Bump::Sdkman),
                             "every candidate is up to date",
                             yes(matches),
                             commit_options(matches),
@@ -62,14 +60,9 @@ fn main() {
                 |candidate| bump_sdkman_candidate(candidate, matches),
             ),
             None => bumpster::all::prepare_outdated(yes(&matches)).and_then(|outdated| {
-                let up_to_date = if outdated.skipped {
-                    "nothing else to bump"
-                } else {
-                    "everything is up to date"
-                };
                 finish_all(
-                    outdated.bumps,
-                    up_to_date,
+                    outdated,
+                    "everything is up to date",
                     yes(&matches),
                     commit_options(&matches),
                 )
@@ -252,15 +245,22 @@ fn bump_sdkman_candidate(candidate: &str, matches: &clap::ArgMatches) -> anyhow:
 /// failure.
 ///
 /// If there are no bumps, it shows the given message saying everything is up
-/// to date instead.
+/// to date instead, or that there's nothing else to bump if anything was
+/// skipped, so a warning isn't followed by a claim that everything is up to
+/// date.
 #[cfg(not(tarpaulin_include))]
 fn finish_all(
-    bumps: Vec<bumpster::all::Bump>,
+    outdated: bumpster::Outdated<bumpster::all::Bump>,
     up_to_date: &str,
     yes: bool,
     options: bumpster::CommitOptions,
 ) -> anyhow::Result<()> {
+    let bumps = outdated.bumps;
     let question = match bumps.len() {
+        0 if outdated.skipped => {
+            println!("nothing else to bump");
+            return Ok(());
+        }
         0 => {
             println!("{up_to_date}");
             return Ok(());

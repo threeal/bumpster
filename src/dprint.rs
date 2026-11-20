@@ -2,7 +2,7 @@
 //! `dprint.json` file, either one plugin at a time or every outdated one.
 
 use crate::git;
-use crate::tool::{self, Edit, PullRequest, replace_once};
+use crate::tool::{self, Edit, Outdated, PullRequest, replace_once};
 use anyhow::{Result, bail};
 
 /// A dprint plugin pinned by its URL in `dprint.json`.
@@ -132,14 +132,15 @@ pub fn prepare<'a>(
 /// changes first, unless `yes` is set.
 ///
 /// Returns the bumps in the order their plugins appear in `dprint.json`, which
-/// is empty if every supported plugin is up to date.
+/// is empty if every supported plugin is up to date, along with whether any
+/// plugin was skipped for not being supported.
 ///
 /// # Errors
 ///
 /// Returns an error if the repository is not ready for the bumps, or if the
 /// version of a plugin can't be read or its latest release can't be found.
 #[cfg(not(tarpaulin_include))] // Sends requests, so it is not unit tested.
-pub fn prepare_outdated(yes: bool) -> Result<Vec<Bump<'static>>> {
+pub fn prepare_outdated(yes: bool) -> Result<Outdated<Bump<'static>>> {
     println!("checking that the repository is ready");
     let base = tool::prepare_repository(yes)?;
     tool::check_paths(&["dprint.json"])?;
@@ -151,20 +152,24 @@ pub fn prepare_outdated(yes: bool) -> Result<Vec<Bump<'static>>> {
 /// showing each one that is already up to date.
 ///
 /// Returns a bump for each of them, with a pull request against the given base
-/// branch, in the order their plugins appear in the file.
+/// branch, in the order their plugins appear in the file, along with whether
+/// any plugin was skipped for not being supported.
 ///
 /// # Errors
 ///
 /// Returns an error if the version of a plugin can't be read or its latest
 /// release can't be found.
 #[cfg(not(tarpaulin_include))] // Sends requests, so it is not unit tested.
-pub(crate) fn find_outdated(dprint_json: &str, base: &str) -> Result<Vec<Bump<'static>>> {
+pub(crate) fn find_outdated(dprint_json: &str, base: &str) -> Result<Outdated<Bump<'static>>> {
     let plugins = find_plugins(dprint_json);
-    for url in plugins.unsupported {
+    for url in &plugins.unsupported {
         println!("warning: {url} is not supported, skipping");
     }
 
-    let mut bumps = Vec::new();
+    let mut outdated = Outdated {
+        bumps: Vec::new(),
+        skipped: !plugins.unsupported.is_empty(),
+    };
     for plugin in plugins.supported {
         let current = read_version(dprint_json, plugin.url_prefix)?;
         println!("finding the latest version of {}", plugin.name);
@@ -173,9 +178,11 @@ pub(crate) fn find_outdated(dprint_json: &str, base: &str) -> Result<Vec<Bump<'s
             println!("{} is up to date at version {current}", plugin.name);
             continue;
         }
-        bumps.push(Bump::new(plugin, dprint_json, version, base.to_string())?);
+        outdated
+            .bumps
+            .push(Bump::new(plugin, dprint_json, version, base.to_string())?);
     }
-    Ok(bumps)
+    Ok(outdated)
 }
 
 impl Bump<'_> {

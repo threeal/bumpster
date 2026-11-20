@@ -286,6 +286,55 @@ pub struct PullRequest {
     pub opened: bool,
 }
 
+/// The bumps of everything that is behind the version its own bump defaults
+/// to, along with whether anything was skipped instead of checked.
+pub struct Outdated<T> {
+    /// The bumps, which is empty if everything that wasn't skipped is up to
+    /// date.
+    pub bumps: Vec<T>,
+    /// Whether anything was skipped, either because it isn't supported or
+    /// because finding whether it is behind failed.
+    pub skipped: bool,
+}
+
+impl<T> Default for Outdated<T> {
+    fn default() -> Self {
+        Self {
+            bumps: Vec::new(),
+            skipped: false,
+        }
+    }
+}
+
+impl<T> Outdated<T> {
+    /// Returns the bumps converted by the given function, keeping whether
+    /// anything was skipped.
+    #[must_use]
+    pub fn map<U>(self, f: impl FnMut(T) -> U) -> Outdated<U> {
+        Outdated {
+            bumps: self.bumps.into_iter().map(f).collect(),
+            skipped: self.skipped,
+        }
+    }
+
+    /// Adds the given bumps, recording a skip if anything was skipped there.
+    pub fn extend(&mut self, other: Self) {
+        self.bumps.extend(other.bumps);
+        self.skipped |= other.skipped;
+    }
+
+    /// Returns what was found for the tools with the given name, or, if
+    /// finding it failed, warns that those tools are skipped, records the
+    /// skip, and returns nothing found, so the other tools can still be bumped.
+    pub fn or_skip<U: Default>(&mut self, name: &str, found: Result<U>) -> U {
+        found.unwrap_or_else(|err| {
+            println!("warning: skipping {name}: {err:#}");
+            self.skipped = true;
+            U::default()
+        })
+    }
+}
+
 /// Opens the pull request for bumping a tool to the given version on the given
 /// branch against the given base branch, or updates the one already open
 /// there, linking to the given URL of the version's release.
@@ -367,6 +416,53 @@ pub fn split_range(range: &str) -> Option<(&str, &str)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn outdated_map() {
+        let outdated = Outdated {
+            bumps: vec![1, 2],
+            skipped: true,
+        };
+        let outdated = outdated.map(|bump| bump * 10);
+        assert_eq!(outdated.bumps, [10, 20]);
+        assert!(outdated.skipped);
+    }
+
+    #[test]
+    fn outdated_extend() {
+        let mut outdated = Outdated {
+            bumps: vec![1],
+            skipped: false,
+        };
+        outdated.extend(Outdated {
+            bumps: vec![2],
+            skipped: false,
+        });
+        assert_eq!(outdated.bumps, [1, 2]);
+        assert!(!outdated.skipped);
+        outdated.extend(Outdated {
+            bumps: vec![3],
+            skipped: true,
+        });
+        assert_eq!(outdated.bumps, [1, 2, 3]);
+        assert!(outdated.skipped);
+    }
+
+    #[test]
+    fn outdated_or_skip_found() {
+        let mut outdated = Outdated::<()>::default();
+        let found = outdated.or_skip("Node.js", Ok(Some("24.12.0")));
+        assert_eq!(found, Some("24.12.0"));
+        assert!(!outdated.skipped);
+    }
+
+    #[test]
+    fn outdated_or_skip_failed() {
+        let mut outdated = Outdated::<()>::default();
+        let found: Result<Option<&str>> = Err(anyhow::anyhow!("failed to request"));
+        assert_eq!(outdated.or_skip("Node.js", found), None);
+        assert!(outdated.skipped);
+    }
 
     #[test]
     fn format_output() {

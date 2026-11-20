@@ -12,4 +12,4 @@ pub mod prompt;
 pub mod sdkman;
 mod tool;
 
-pub use tool::{CommitOptions, PullRequest};
+pub use tool::{CommitOptions, Outdated, PullRequest};
